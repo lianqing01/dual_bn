@@ -256,7 +256,6 @@ class Constraint_Affine1d(Constraint_Affine):
     def __init__(self, num_features):
         super(Constraint_Affine1d, self).__init__(num_features)
 
-    def set_dim(self):
         self.feature_dim = [1, self.num_features]
 
 

@@ -62,7 +62,7 @@ parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--grad_clip', default=1000)
 parser.add_argument('--optim_loss', default="cross_entropy")
 parser.add_argument('--num_classes', default=10, type=int)
 parser.add_argument('--print_freq', default=10, type=int)
@@ -467,7 +467,7 @@ def _initialize(epoch):
     for layer in range(num_norm):
         for i in range(3):
             for batch_idx, (inputs, targets) in enumerate(trainloader):
-                if batch_idx>10 * 128/args.batch_size:
+                if batch_idx>2 * 128/args.batch_size:
                     break
                 start = time.time()
                 if use_cuda:
@@ -657,8 +657,6 @@ def get_norm_stat(epoch):
     optimizer.zero_grad()
     return None
 
-with torch.no_grad():
-    _initialize(0)
 
 
 

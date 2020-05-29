@@ -34,6 +34,15 @@ try:
 except:
     pass
 
+try:
+    from apex.parallel import DistributedDataParallel as DDP
+    from apex.fp16_utils import *
+    from apex import amp, optimizers
+    from apex.multi_tensor_apply import multi_tensor_applier
+except ImportError:
+    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
+
+
 def str2bool(v):
         if isinstance(v, bool):
             return v
@@ -98,6 +107,8 @@ parser.add_argument('--noise_var_std', default=0, type=float)
 
 
 
+parser.add_argument("--local_rank", default=0, type=int)
+
 # dataset
 parser.add_argument('--dataset', default='CIFAR10', type=str)
 parser.add_argument('--add_grad_noise', default=False, type=str2bool)
@@ -130,6 +141,22 @@ logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir
 wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
+
+args.distributed = False
+if 'WORLD_SIZE' in os.environ:
+    args.distributed = int(os.environ['WORLD_SIZE']) > 0
+
+args.gpu = 0
+args.world_size = 1
+
+if args.distributed:
+    logger.info(args.local_rank)
+    args.gpu = args.local_rank
+    torch.cuda.set_device(args.gpu)
+    torch.distributed.init_process_group(backend='nccl',
+                                         init_method='env://')
+    args.world_size = torch.distributed.get_world_size()
+logger.info(args.world_size)
 
 #
 # Data
@@ -245,6 +272,12 @@ constraint_optimizer = (optim.SGD(
                     ))
 
 '''
+net, optimizer = amp.initialize(net, optimizer,
+                                    opt_level='O1',
+                                    )
+
+
+net = DDP(net, delay_allreduce=True)
 
 # Model
 if args.resume:
@@ -348,7 +381,11 @@ def train(epoch):
         acc.update(100. * correct_idx / float(targets.size(0)))
 
         optimizer.zero_grad()
-        loss.backward()
+        if use_cuda:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
         if args.add_grad_noise == True:
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
@@ -657,8 +694,8 @@ def get_norm_stat(epoch):
     optimizer.zero_grad()
     return None
 
-with torch.no_grad():
-    _initialize(0)
+#with torch.no_grad():
+#    _initialize(0)
 
 
 
@@ -827,8 +864,6 @@ if torch.__version__ < '1.4.1':
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
 
-with torch.no_grad():
-    _initialize(0)
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
     lr1 = optimizer.param_groups[1]['lr']
