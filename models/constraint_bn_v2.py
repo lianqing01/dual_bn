@@ -109,7 +109,7 @@ class Constraint_Norm(nn.Module):
 
     def _initialize_gamma(self):
         self.var = self.var / self.tracking_times
-        self.gamma_.data/= torch.sqrt(self.var.view(self.gamma_.size()).clamp(min=0))
+        self.gamma_.data*= torch.sqrt(self.var.view(self.gamma_.size()).clamp(min=0))
 
 
     def forward(self, x):
@@ -135,6 +135,8 @@ class Constraint_Norm(nn.Module):
             mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         self.mean += mean.detach()
         # var
+
+        var = self.lagrangian.get_weighted_var(x, self.gamma_,  self.norm_dim)
         if self.pre_affine:
             if self.sample_noise and self.training:
                 if self.noise_data_dependent:
@@ -148,10 +150,7 @@ class Constraint_Norm(nn.Module):
                     noise_var = noise_var.view(self.gamma_.size())
                     x = x * (self.gamma_*noise_var)
             else:
-                x = x * self.gamma_
-            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
-        else:
-            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+                x = x / torch.sqrt(self.gamma_**2 + 1e-4)
         self.var += var.detach()
 
         self.tracking_times += 1
@@ -220,13 +219,18 @@ class Constraint_Lagrangian(nn.Module):
         return mean
 
 
-    def get_weighted_var(self, x, norm_dim):
-        var = x**2 - 1
-        var = var.mean(dim=norm_dim)
-        self.weight_var = LagrangianFunction.apply(var, self.lambda_)
+    def get_weighted_var(self, x, gamma, norm_dim):
+        var_loss = (x**2).mean(dim=norm_dim)
+        var_loss -= (gamma**2).mean(dim=norm_dim)
+        self.weight_var = LagrangianFunction.apply(var_loss, self.lambda_)
         self.weight_var = self.weight_var.sum()
         self.weight_var_abs = self.weight_var.abs().sum().detach()
-        return var+1
+        with torch.no_grad():
+            var = x / torch.sqrt(gamma**2 + 1e-4)
+            return (var**2).mean(dim=norm_dim)
+
+
+
     def get_weight_mean_var(self):
         return (self.weight_mean, self.weight_var)
 

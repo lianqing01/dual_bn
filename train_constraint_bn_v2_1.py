@@ -62,7 +62,7 @@ parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=10)
+parser.add_argument('--grad_clip', default=100)
 parser.add_argument('--optim_loss', default="cross_entropy")
 parser.add_argument('--num_classes', default=10, type=int)
 parser.add_argument('--print_freq', default=10, type=int)
@@ -165,6 +165,9 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
+                                          shuffle=True, num_workers=2)
+initloader = torch.utils.data.DataLoader(trainset,
+                                          batch_size=256,
                                           shuffle=True, num_workers=2)
 
 if args.dataset == 'CIFAR10':
@@ -464,10 +467,10 @@ def _initialize(epoch):
         if isinstance(m, Constraint_Norm):
             m.reset_norm_statistics()
             num_norm+=1
-    for layer in range(num_norm):
-        for i in range(3):
-            for batch_idx, (inputs, targets) in enumerate(trainloader):
-                if batch_idx>10 * 128/args.batch_size:
+    for layer in range(num_norm+1):
+        for i in range(2):
+            for batch_idx, (inputs, targets) in enumerate(initloader):
+                if batch_idx>2:
                     break
                 start = time.time()
                 if use_cuda:
@@ -477,8 +480,11 @@ def _initialize(epoch):
                     targets = targets.to(device)
                 bsz = inputs.size(0)
 
-
-                outputs = net(inputs)
+                if layer < num_norm:
+                    with torch.no_grad():
+                        outputs = net(inputs)
+                else:
+                    outputs = net(inputs)
                 if args.optim_loss == 'mse':
                     targets = targets.float()
                 loss = criterion(outputs, targets)
@@ -524,7 +530,7 @@ def _initialize(epoch):
                 remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
 
-                if (batch_idx+1) % args.print_freq == 0:
+                if (batch_idx+1) % 1== 0:
                     mean = []
                     var = []
                     for m in net.modules():
@@ -546,7 +552,7 @@ def _initialize(epoch):
                     lambda_ = torch.max(torch.stack(lambda_))
                     xi_ = torch.max(torch.stack(xi_))
 
-                if (batch_idx+1) % args.print_freq == 0:
+                if (batch_idx+1) % 1 == 0:
                     logger.info("Initializing")
                     logger.info('Train: [{0}][{1}/{2}]\t'
                             'mean {mean:.4f}\t'
@@ -577,6 +583,16 @@ def _initialize(epoch):
                             break
                         else:
                             track_layer += 1
+            if layer == num_norm:
+                loss.backward()
+                for m in net.modules():
+                    if isinstance(m, Constraint_Norm):
+                        # for mu
+                        m.lagrangian.xi_.data = m.mu_.grad.view(-1)
+                        # for gamma_
+                        m.lagrangian.lambda_.data = m.gamma_.grad.view(-1) / (2 * m.gamma_.data.view(-1) +1e-4)
+                break
+
 
 
             for m in net.modules():
@@ -585,6 +601,10 @@ def _initialize(epoch):
 
 
     logger.info("initializing epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.reset_norm_statistics()
+
 
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
@@ -657,8 +677,7 @@ def get_norm_stat(epoch):
     optimizer.zero_grad()
     return None
 
-with torch.no_grad():
-    _initialize(0)
+_initialize(0)
 
 
 
@@ -827,8 +846,6 @@ if torch.__version__ < '1.4.1':
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
 
-with torch.no_grad():
-    _initialize(0)
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
     lr1 = optimizer.param_groups[1]['lr']
