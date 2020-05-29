@@ -49,7 +49,8 @@ parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=10)
+parser.add_argument('--test', default=False, type=bool)
+parser.add_argument('--grad_clip', default=1)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
@@ -130,18 +131,33 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=4)
 
 
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
+net = models.__dict__[args.model](num_classes=num_classes)
+
 # Model
 if args.resume:
     # Load checkpoint.
     logger.info('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load(args.load_model)
-    net = checkpoint['net']
+    net.load_state_dict(checkpoint['state_dict'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch'] + 1
 else:
     logger.info('==> Building model..')
-    net = models.__dict__[args.model](num_classes=num_classes)
 
 
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
@@ -280,6 +296,8 @@ def test(epoch):
     net.eval()
     test_loss = AverageMeter(100)
     acc = AverageMeter(100)
+    acc2 = AverageMeter(100)
+    acc3 = AverageMeter(100)
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -298,10 +316,15 @@ def test(epoch):
             test_loss.update(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
+            acc1, acc2_, acc3_ = accuracy(outputs, targets, topk=(1,2,3))
+
             correct_idx = predicted.eq(targets.data).sum().item()
             correct += correct_idx
 
             acc.update(100. * correct_idx / float(targets.size(0)))
+            acc2.update(float(acc2_))
+            acc3.update(float(acc3_))
+
         progress_bar(batch_idx, len(testloader),
                      'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (test_loss.avg, acc.avg,
@@ -315,6 +338,8 @@ def test(epoch):
     tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
     wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
+    logger.info("acc2: {}".format(acc2.avg))
+    logger.info("acc3: {}".format(acc3.avg))
 
     return (test_loss.avg, 100.*correct/total)
 
@@ -360,6 +385,8 @@ if not os.path.exists(logname):
         logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
                             'test loss', 'test acc'])
 
+if args.test == True:
+    test(0)
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
