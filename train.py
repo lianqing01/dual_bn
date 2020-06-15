@@ -50,7 +50,7 @@ parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--test', default=False, type=bool)
-parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--grad_clip', default=10000)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
@@ -81,7 +81,7 @@ logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir
 
 
 
-wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
+wandb.init(project="cifar100", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
@@ -244,6 +244,8 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+
         if use_cuda:
             optimizer.step()
         else:
