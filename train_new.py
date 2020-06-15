@@ -53,7 +53,7 @@ parser.add_argument('--test', default=False, type=bool)
 parser.add_argument('--grad_clip', default=1)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
-parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--schedule', default=[30,60])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
 parser.add_argument('--fixup_scale_decay', default=1e-4, type=float)

@@ -9,7 +9,6 @@ from .mobilenet import *
 from .densenet3 import DenseNet190
 from .two_layer import *
 from .resnet_nobn import *
-from .sync_batchnorm import *
 from .resnet_constraintbn import *
 from .resnet_constraintbn_init import *
 from .resnet_constraintbn_v3 import *

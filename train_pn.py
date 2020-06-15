@@ -168,20 +168,6 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
 net = models.__dict__[args.model](num_classes=num_classes)
 # Model
 
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
-if args.resume:
-    # Load checkpoint.
-    logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load(args.load_model)
-    net.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optim'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
-
-else:
-    logger.info('==> Building model..')
 
 if use_cuda:
     net.cuda()
@@ -194,6 +180,21 @@ else:
     net = net.to(device)
     logger.info("xla")
 
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
+                      weight_decay=args.decay)
+
+if args.resume:
+    # Load checkpoint.
+    logger.info('==> Resuming from checkpoint..')
+    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load(args.load_model)
+    net.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optim'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+
+else:
+    logger.info('==> Building model..')
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
 
@@ -283,7 +284,6 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         if use_cuda:
             optimizer.step()
         else:
@@ -419,22 +419,6 @@ if not os.path.exists(logname):
 if use_cuda:
     device = torch.device("cuda")
 print(args.data_dependent)
-for m in net.modules():
-    if isinstance(m, BatchNorm2d) or isinstance(m, BatchRenorm2d) or isinstance(m, GroupNorm):
-        m.sample_noise = args.sample_noise
-        m.data_dependent = args.data_dependent
-        m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
-        m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
-        m.noise_mean = torch.zeros(m.num_features).to(device)
-        m.noise_mean_var = torch.zeros(m.num_features).fill_(args.noise_mean_var).to(device)
-        m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
-        m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
-        if isinstance(m, GroupNorm):
-            m.noise_mean = torch.ones([args.batch_size, m.num_groups, 1]).to(device)
-
-
-        m.r_max = args.r_max
-        m.batch_renorm = args.batch_renorm
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
