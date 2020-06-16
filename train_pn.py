@@ -76,7 +76,7 @@ parser.add_argument('--noise_bsz', default=128, type=int)
 parser.add_argument('--noise_std', default=0, type=float)
 parser.add_argument('--r_max', default=0.5, type=float)
 parser.add_argument('--batch_renorm', default=False, type=str2bool)
-parser.add_argument('--project_name', default="dual_bn_v2", type=str)
+parser.add_argument('--project_name', default="cifar100", type=str)
 
 
 # dataset

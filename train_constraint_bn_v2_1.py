@@ -142,7 +142,7 @@ args.log_dir = args.log_dir
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
-wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
+wandb.init(project="cifar100", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
