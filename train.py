@@ -244,6 +244,9 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+
+
         if use_cuda:
             optimizer.step()
         else:
