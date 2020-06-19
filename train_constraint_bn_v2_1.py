@@ -333,23 +333,18 @@ def train(epoch):
 
 
         # constraint loss
-        weight_mean = 0
-        weight_var = 0
-        weight_mean_abs = 0
-        weight_var_abs = 0
+        weight_mean = []
+        weight_var = []
         for m in net.modules():
             if isinstance(m, Constraint_Lagrangian):
                 weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
-                weight_mean += weight_mean_
-                weight_var += weight_var_
-                weight_mean_abs += weight_mean_abs_
-                weight_var_abs += weight_var_abs_
+                weight_mean.append(weight_mean_)
+                weight_var.append(weight_var_)
+        weight_mean = torch.stack(weight_mean).mean()
+        weight_var = torch.stack(weight_var).mean()
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
         constraint_loss = args.lambda_constraint_weight * constraint_loss
-        weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
-        weight_var_abs = args.lambda_constraint_weight * weight_var_abs
 
         # optimize constraint loss
 
@@ -425,8 +420,6 @@ def train(epoch):
             tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
             tb_logger.add_scalar("train/norm_mean(abs)", mean, curr_idx)
             tb_logger.add_scalar("train/norm_var-1(abs)", var, curr_idx)
-            tb_logger.add_scalar("train/weight_mean(abs)", weight_mean_abs.item(), curr_idx)
-            tb_logger.add_scalar("train/weight_var-1(abs)", weight_var_abs.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_loss_var", -1 * weight_var.item(), curr_idx)
 
@@ -449,8 +442,6 @@ def train(epoch):
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
     wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
     wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
-    wandb.log({"train/weight_mean(abs)": weight_mean_abs.item()},step=epoch)
-    wandb.log({"train/weight_var-1(abs)": weight_var_abs.item()}, step=epoch)
     wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
     wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
@@ -500,25 +491,21 @@ def _initialize(epoch):
                     targets = targets.float()
                 loss = criterion(outputs, targets)
 
+                #constraint loss
 
-                # constraint loss
-                weight_mean = 0
-                weight_var = 0
-                weight_mean_abs = 0
-                weight_var_abs = 0
+                weight_mean = []
+                weight_var = []
                 for m in net.modules():
                     if isinstance(m, Constraint_Lagrangian):
                         weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                        weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
-                        weight_mean += weight_mean_
-                        weight_var += weight_var_
-                        weight_mean_abs += weight_mean_abs_
-                        weight_var_abs += weight_var_abs_
+                        weight_mean.append(weight_mean_)
+                        weight_var.append(weight_var_)
+                weight_mean = torch.stack(weight_mean).mean()
+                weight_var = torch.stack(weight_var).mean()
+
 
                 constraint_loss = weight_mean + weight_var
                 constraint_loss = args.lambda_constraint_weight * constraint_loss
-                weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
-                weight_var_abs = args.lambda_constraint_weight * weight_var_abs
 
                 # optimize constraint loss
 
@@ -638,23 +625,19 @@ def get_norm_stat(epoch):
 
 
         # constraint loss
-        weight_mean = 0
-        weight_var = 0
-        weight_mean_abs = 0
-        weight_var_abs = 0
+        weight_mean = []
+        weight_var = []
         for m in net.modules():
             if isinstance(m, Constraint_Lagrangian):
                 weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
-                weight_mean += weight_mean_
-                weight_var += weight_var_
-                weight_mean_abs += weight_mean_abs_
-                weight_var_abs += weight_var_abs_
+                weight_mean.append(weight_mean_)
+                weight_var.append(weight_var_)
+        weight_mean = torch.stack(weight_mean).mean()
+        weight_var = torch.stack(weight_var).mean()
+
 
         constraint_loss = weight_mean + weight_var
         constraint_loss = args.lambda_constraint_weight * constraint_loss
-        weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
-        weight_var_abs = args.lambda_constraint_weight * weight_var_abs
 
         # optimize constraint loss
         loss = criterion(outputs, targets)

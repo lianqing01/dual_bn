@@ -4,7 +4,7 @@ import torch.utils.model_zoo as model_zoo
 from .group_norm import GroupNorm
 
 
-__all__ = ['ResNet', 'resnet50', 'resnet101']
+__all__ = ['resnet_gn_', 'resnet_gn_50', 'resnet_gn_101']
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -67,11 +67,11 @@ def gn_init(m, zero_init=False):
     m.bias.data.zero_()
 
 
-class ResNet(nn.Module):
+class resnet_gn_(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000):
         self.inplanes = 64
-        super(ResNet, self).__init__()
+        super(resnet_gn_, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = GroupNorm(32, 64)
@@ -127,10 +127,10 @@ class ResNet(nn.Module):
         return x
 
 
-def resnet50(**kwargs):
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+def resnet_gn_50(**kwargs):
+    model = resnet_gn_(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
 
-def resnet101(**kwargs):
-    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+def resnet_gn_101(**kwargs):
+    model = resnet_gn_(Bottleneck, [3, 4, 23, 3], **kwargs)
     return model

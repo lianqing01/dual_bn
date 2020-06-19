@@ -218,8 +218,7 @@ class Constraint_Lagrangian(nn.Module):
     def get_weighted_mean(self, x, norm_dim):
         mean = x.mean(dim=norm_dim)
         self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
-        self.weight_mean = self.weight_mean.sum()
-        self.weight_mean_abs = self.weight_mean.abs().sum().detach()
+        self.weight_mean = self.weight_mean.mean()
         return mean
 
 
@@ -227,8 +226,7 @@ class Constraint_Lagrangian(nn.Module):
         var = x**2 - 1
         var = var.mean(dim=norm_dim)
         self.weight_var = LagrangianFunction.apply(var, self.lambda_)
-        self.weight_var = self.weight_var.sum()
-        self.weight_var_abs = self.weight_var.abs().sum().detach()
+        self.weight_var = self.weight_var.mean()
         return var+1
     def get_weight_mean_var(self):
         return (self.weight_mean, self.weight_var)
