@@ -66,15 +66,13 @@ class BatchRenorm(nn.Module):
                 / (self.running_std.view_as(batch_std) + self.eps
             )).clamp(-self.dmax, self.dmax)
             if self.sample_noise is True:
-                sample_mean = torch.ones([1,C]).half()
-                noise_mean = torch.normal(mean=sample_mean, std=self.sample_std_mean.detach()).clamp(min=0.3, max=3.3)
-                noise_var = torch.normal(mean=sample_mean, std=self.sample_std_var.detach()).clamp(min=0.3, max=3.3)
-                noise_var = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
-                noise_mean = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
-                r = unsqueeze_tensor(r)
-                d = unsqueeze_tensor(d)
+                noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std_mean).clamp(min=0.1, max=10)
+                noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std_var).clamp(min=0.1, max=10)
+
                 r *= noise_var.detach()
                 d *= noise_mean.detach()
+                r = unsqueeze_tensor(r)
+                d = unsqueeze_tensor(d)
                 r = r.detach().clamp(1/self.rmax, self.rmax)
                 d = d.detach().clamp(-self.dmax, self.dmax)
             else:

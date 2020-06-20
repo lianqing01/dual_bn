@@ -31,6 +31,15 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
 
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
@@ -64,6 +73,11 @@ parser.add_argument('--fixup_scale_decay', default=1e-4, type=float)
 parser.add_argument('--dataset', default='CIFAR10', type=str)
 
 parser.add_argument('--print_freq', default=10, type=int)
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--noise_std_mean', default=0, type=float)
+parser.add_argument('--noise_std_var', default=0, type=float)
+
+
 
 
 args = parser.parse_args()
@@ -345,6 +359,9 @@ def test(epoch):
 
 
 
+
+
+
 def save_checkpoint(acc, epoch):
     logger.info("Saving, epoch: {}".format(epoch))
     state = {
@@ -385,6 +402,15 @@ if not os.path.exists(logname):
         logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
                             'test loss', 'test acc'])
 
+from models.batchrenorm import BatchRenorm2d
+if use_cuda:
+    device=torch.device("cuda")
+for m in net.modules():
+    if isinstance(m, BatchRenorm2d):
+        m.sample_noise=args.sample_noise
+        m.sample_mean = torch.ones(m.num_features).to(device)
+        m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
+        m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
 if args.test == True:
     test(0)
 for epoch in range(start_epoch, args.epoch):
