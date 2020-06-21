@@ -403,10 +403,11 @@ if not os.path.exists(logname):
                             'test loss', 'test acc'])
 
 from models.batchrenorm import BatchRenorm2d
+from models.batchnorm import BatchNorm2d
 if use_cuda:
     device=torch.device("cuda")
 for m in net.modules():
-    if isinstance(m, BatchRenorm2d):
+    if isinstance(m, (BatchRenorm2d, BatchNorm2d)):
         m.sample_noise=args.sample_noise
         m.sample_mean = torch.ones(m.num_features).to(device)
         m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)

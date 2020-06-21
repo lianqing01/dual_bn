@@ -118,8 +118,15 @@ class _BatchNorm(_NormBase):
                 unbiased_mean = mean.clone()
                 unbiased_var = var.clone () * (bsz/float(bsz - 1))
                 std = torch.sqrt(var)
-                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+                if self.sample_noise is True:
+                    noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std_mean).clamp(min=0.1, max=10)
+                    noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std_var).clamp(min=0.1, max=10)
+                    output = (input - _unsqueeze_ft(mean * noise_mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * noise_var * self.weight) \
                     + _unsqueeze_ft(self.bias)
+
+                else:
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+                        + _unsqueeze_ft(self.bias)
 
                 input = input.view(input_shape)
                 with torch.no_grad():

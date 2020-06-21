@@ -1,5 +1,5 @@
 python train.py --model $1 \
-    --log_dir resnet18_brn_noise_bsz_128+$2 \
+    --log_dir $1+_noise_bsz_128+$2 \
     --dataset CIFAR100 \
     --batch-size 128 \
     --sample_noise True \

@@ -64,16 +64,17 @@ parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--grad_clip', default=1000)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
 parser.add_argument('--sample_noise', default=False, type=str2bool)
-parser.add_argument('--data_dependent', default=False, type=str2bool)
-parser.add_argument('--noise_bsz', default=128, type=int)
-parser.add_argument('--noise_std', default=0, type=float)
+parser.add_argument('--noise_std_mean', default=0, type=float)
+parser.add_argument('--noise_std_var', default=0, type=float)
+
+
 parser.add_argument('--r_max', default=0.5, type=float)
 parser.add_argument('--batch_renorm', default=False, type=str2bool)
 parser.add_argument('--project_name', default="cifar100", type=str)
@@ -284,6 +285,9 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+
+
         if use_cuda:
             optimizer.step()
         else:
@@ -418,7 +422,13 @@ if not os.path.exists(logname):
 
 if use_cuda:
     device = torch.device("cuda")
-print(args.data_dependent)
+for m in net.modules():
+    if isinstance(m, (BatchRenorm2d, BatchNorm2d)):
+        m.sample_noise=args.sample_noise
+        m.sample_mean = torch.ones(m.num_features).to(device)
+        m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
+        m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
+
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)

@@ -1,4 +1,5 @@
 from .vgg import *
+from .resnet_mybn import *
 from .lenet import *
 from .resnet import *
 from .resnext import *

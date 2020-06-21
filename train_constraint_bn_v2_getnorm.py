@@ -376,8 +376,6 @@ def train(epoch):
         t_m, t_s = divmod(remain_time, 60)
         t_h, t_m = divmod(t_m, 60)
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-        import pdb
-        pdb.set_trace()
 
 
         if (batch_idx+1) % args.print_freq == 0:
@@ -447,9 +445,28 @@ def train(epoch):
     wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
     wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
+    theta_ = []
+    norm_weight = []
+    grad_theta_ = []
+    grad_norm_weight = []
+    lagrangian = []
+    grad_lagrangian = []
 
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+    for key, item in net.named_parameters():
+        if 'bn' not in key:
+            theta_.append(torch.norm(item, p=2))
+            grad_theta_.append(torch.norm(item.grad, p=2))
+        elif 'lagrangian' not in key:
+            norm_weight.append(torch.norm(item, p=2))
+            grad_norm_weight.append(torch.norm(item.grad, p=2))
+        else:
+            lagrangian.append(torch.norm(item, p=2))
+            grad_lagrangian.append(torch.norm(item.grad, p=2))
+    logger.info("theta_ : {}, grad_theta_: {}".format(torch.stack(theta_).mean().item(), torch.stack(grad_theta_).mean().item()))
+    logger.info("norm_parame_ : {}, grad_norm_param_: {}".format(torch.stack(norm_weight).mean().item(), torch.stack(grad_norm_weight).mean().item()))
+    logger.info("lagrangian_ : {}, grad_lagrangian_: {}".format(torch.stack(lagrangian).mean().item(), torch.stack(grad_lagrangian).mean().item()))
+
+    if isinstance(m, Constraint_Norm):
             m.reset_norm_statistics()
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
