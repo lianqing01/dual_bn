@@ -32,3 +32,4 @@ from .resnet_v1 import *
 from .resnet_constraintbn_init_v2 import *
 from .resnet_aka_brn import *
 from .resnet_brn import *
+from .resnet_aka_unbiasbn import *

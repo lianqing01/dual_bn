@@ -8,6 +8,7 @@ from .dual_norm import DualNorm
 from .MABN import MABN2d
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
+from .batchnorm_sample import BatchNorm_unbias2d
 from .batchnorm import BatchNorm2d
 from .instancenorm import InstanceNorm2d
 from .batchrenorm import BatchRenorm2d
@@ -107,6 +108,10 @@ class VGG(nn.Module):
                 elif with_bn == 'bn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'ubbn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               BatchNorm_unbias2d(x),
                                nn.ReLU(inplace=True)]
                 elif with_bn == 'bn_v2':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
@@ -242,6 +247,9 @@ def vgg16_constraint_bn_v2(num_classes=10):
 
 def vgg16_constraint_bn_v3(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v3')
+
+def vgg16_ubbn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='ubbn')
 
 
 
