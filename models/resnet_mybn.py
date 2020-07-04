@@ -130,6 +130,7 @@ class resnet_mybn_(nn.Module):
         if norm_layer is None:
             norm_layer = BatchNorm2d
         self._norm_layer = norm_layer
+        print(self._norm_layer)
 
         self.inplanes = 64
         self.dilation = 1

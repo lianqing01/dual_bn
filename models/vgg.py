@@ -8,7 +8,6 @@ from .dual_norm import DualNorm
 from .MABN import MABN2d
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
-from .batchnorm_sample import BatchNorm_unbias2d
 from .batchnorm import BatchNorm2d
 from .instancenorm import InstanceNorm2d
 from .batchrenorm import BatchRenorm2d
@@ -56,9 +55,9 @@ cfg = {
 
 
 class VGG(nn.Module):
-    def __init__(self, vgg_name, num_classes = 10, with_bn=False):
+    def __init__(self, vgg_name, num_classes = 10, with_bn=False, norm_layer=None):
         super(VGG, self).__init__()
-        self.features = self._make_layers(cfg[vgg_name], with_bn)
+        self.features = self._make_layers(cfg[vgg_name], with_bn, norm_layer)
         self.classifier = nn.Sequential(
             nn.Dropout(),
             nn.Linear(512, 512),
@@ -93,7 +92,7 @@ class VGG(nn.Module):
         out = self.classifier(out)
         return out
 
-    def _make_layers(self, cfg, with_bn=False):
+    def _make_layers(self, cfg, with_bn=False, norm_layer = None):
         layers = []
         in_channels = 3
         for idx, x in enumerate(cfg):
@@ -168,6 +167,10 @@ class VGG(nn.Module):
                 elif with_bn == 'mabn_cen':
                     layers += [Conv_Cen2d(in_channels, x, kernel_size=3, padding=1),
                                MABN2d(x),
+                               nn.ReLU(inplace=True),]
+                elif with_bn == 'mybn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               norm_layer(x),
                                nn.ReLU(inplace=True),]
 
                 else:
@@ -256,6 +259,12 @@ def vgg16_ubbn(num_classes=10):
 
 def vgg16_constraint_bn_v2_noaffine(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v2_no_affine')
+
+
+def vgg16_mybn(num_classes=10, norm_layer=None):
+    if norm_layer is None:
+        norm_layer = nn.BatchNorm2d
+    return VGG('VGG16', num_classes=num_classes, with_bn='mybn', norm_layer=norm_layer)
 # net = VGG('VGG11')
 # x = torch.randn(2,3,32,32)
 # print(net(Variable(x)).size())

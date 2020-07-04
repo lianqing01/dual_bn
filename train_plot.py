@@ -10,7 +10,7 @@ from comet_ml import Experiment
 import argparse
 import os.path as osp
 import time
-from models import BatchNorm_augmented2d, BatchNorm_oracle2d
+from models import BatchNorm_augmented2d
 import csv
 import os
 try:
@@ -172,10 +172,6 @@ if args.norm_layer is not None and args.norm_layer != 'False':
         norm_layer = models.__dict__['BatchNorm_mvv22d']
     elif args.norm_layer == 'mv_aug':
         norm_layer = models.__dict__['BatchNorm_augmented2d']
-    elif args.norm_layer == 'mv_oracle':
-        norm_layer = models.__dict__['BatchNorm_oracle2d']
-
-
     else:
         norm_layer = nn.BatchNorm2d
     net = models.__dict__[args.model](num_classes=num_classes, norm_layer=norm_layer)
@@ -254,7 +250,7 @@ if args.norm_layer == 'mv_aug':
     optimizer = optim.SGD(
         [{'params': parameter_mu, 'lr': args.bn_param_lr, 'weight_decay': 0, 'momentum': 0},
          {'params': parameter_gamma, 'lr': args.bn_param_lr, 'weight_decay': 0, 'momentum': 0},
-         {'params': parameter_lag, 'lr': args.lag_param_lr, 'weight_decay': 1e-1, 'momentum': 0.9},
+         {'params': parameter_lag, 'lr': args.lag_param_lr, 'weight_decay': 0, 'momentum': 0.9},
          {'params': parameter_others}],
         lr=args.lr,
         momentum=0.9,
@@ -359,33 +355,15 @@ def train(epoch):
                 rho_gamma/=float(layer)
                 logger.info("mu_dis: {:.3f}, gamma_dis: {:.3f} lambda mu {:.3f} gamma {:.3f} rho mu {:.3f} gamma {:.3f}".format(mu_dis, gamma_dis, lambda_mu, lambda_gamma, rho_mu, rho_gamma))
 
-                wandb.log({"train/mu_dis": mu_dis}, step=epoch)
-                wandb.log({"train/gamma_dis": gamma_dis}, step=epoch)
-                wandb.log({"train/lambda_mu": lambda_mu}, step=epoch)
-                wandb.log({"train/lambda_gamma": lambda_gamma}, step=epoch)
-                wandb.log({"train/rho_mu": rho_mu}, step=epoch)
-                wandb.log({"train/rho_gamma": rho_gamma}, step=epoch)
-
-
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
+    wandb.log({"train/mu_dis": mu_dis}, step=epoch)
+    wandb.log({"train/gamma_dis": gamma_dis}, step=epoch)
 
 
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
-    mu_dis = []
-    gamma_dis = []
-
-    if (epoch+1) % 50==0:
-        if args.norm_layer == 'mv_oracle':
-                for m in net.modules():
-                    if isinstance(m, BatchNorm_oracle2d):
-                        mu_dis.append(m.mu_dis.item())
-                        gamma_dis.append(m.gamma_dis.item())
-    mu_dises.append(mu_dis)
-    gamma_dises.append(gamma_dis)
-
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
@@ -498,8 +476,6 @@ for m in net.modules():
         m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
 if args.test == True:
     test(0)
-mu_dises = []
-gamma_dises = []
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)

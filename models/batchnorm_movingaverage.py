@@ -5,11 +5,11 @@ from torch.autograd.function import Function
 
 
 
-class BatchNorm_unbias2d(_BatchNorm):
+class BatchNorm_mv2d(_BatchNorm):
     """
     synchronized batch normalization module extented from ``torch.nn.BatchNormNd``
     with the added stats reduction across multiple processes.
-    :class:`apex.parallel.BatchNorm_unbias2d` is designed to work with
+    :class:`apex.parallel.BatchNorm_mv2d` is designed to work with
     ``DistributedDataParallel``.
     When running in training mode, the layer reduces stats across all processes
     to increase the effective batchsize for normalization layer. This is useful
@@ -33,7 +33,7 @@ class BatchNorm_unbias2d(_BatchNorm):
             this module does not track such statistics and always uses batch
             statistics in both training and eval modes. Default: ``True``
     Example::
-        >>> sbn = apex.parallel.BatchNorm_unbias2d(100).cuda()
+        >>> sbn = apex.parallel.BatchNorm_mv2d(100).cuda()
         >>> inp = torch.randn(10, 100, 14, 14).cuda()
         >>> out = sbn(inp)
         >>> inp = torch.randn(3, 100, 20).cuda()
@@ -42,18 +42,26 @@ class BatchNorm_unbias2d(_BatchNorm):
 
     warned = False
 
-    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True, channel_last=False):
+    def __init__(self, num_features, eps=1e-4, momentum=0.2, affine=True, track_running_stats=True, channel_last=False):
         if channel_last == True:
-            raise AttributeError("channel_last is not supported by primitive BatchNorm_unbias2d implementation. Try install apex with `--cuda_ext` if channel_last is desired.")
+            raise AttributeError("channel_last is not supported by primitive BatchNorm_mv2d implementation. Try install apex with `--cuda_ext` if channel_last is desired.")
 
-        if not BatchNorm_unbias2d.warned:
+        if not BatchNorm_mv2d.warned:
             if hasattr(self, "syncbn_import_error"):
-                print("Warning:  using Python fallback for BatchNorm_unbias2d, possibly because apex was installed without --cuda_ext.  The exception raised when attempting to import the cuda backend was: ", self.syncbn_import_error)
+                print("Warning:  using Python fallback for BatchNorm_mv2d, possibly because apex was installed without --cuda_ext.  The exception raised when attempting to import the cuda backend was: ", self.syncbn_import_error)
             else:
-                print("Warning:  using Python fallback for BatchNorm_unbias2d")
-            BatchNorm_unbias2d.warned = True
+                print("Warning:  using Python fallback for BatchNorm_mv2d")
+            BatchNorm_mv2d.warned = True
 
-        super(BatchNorm_unbias2d, self).__init__(num_features, eps=eps, momentum=momentum, affine=affine, track_running_stats=track_running_stats)
+        super(BatchNorm_mv2d, self).__init__(num_features, eps=eps, momentum=momentum, affine=affine, track_running_stats=track_running_stats)
+
+
+    @property
+    def _momentum(self) -> float:
+        if self.num_batches_tracked>=2000:
+            return self.momentum
+        else:
+            return 1.0
 
 
     def forward(self, input):
@@ -80,6 +88,9 @@ class BatchNorm_unbias2d(_BatchNorm):
         else:
             self.num_batches_tracked += 1
             bsz = input.size(0)
+
+            if self.num_batches_tracked >= 2000:
+                out = SyncBatchnormFunction.apply(input, self.weight, self.bias, self.running_mean, self.running_var, self.eps)
             with torch.no_grad():
                 channel_first_input = input.transpose(0, 1).contiguous()
                 squashed_input_tensor_view = channel_first_input.view(
@@ -96,16 +107,18 @@ class BatchNorm_unbias2d(_BatchNorm):
                 var = sqr_mean - mean.pow(2)
 
                 if self.running_mean is not None:
-                    self.running_mean = self.momentum * mean + \
-                        (1 - self.momentum) * self.running_mean
+                    self.running_mean = self._momentum * mean + \
+                        (1 - self._momentum) * self.running_mean
                 if self.running_var is not None:
                     # as noted by the paper, we used unbiased variance estimate of the mini-batch
                     # Var[x] = m / (m-1) * Eb (sample_variance)
                     self.running_var = m / \
-                        (m-1) * self.momentum * var + \
-                        (1 - self.momentum) * self.running_var
+                        (m-1) * self._momentum * var + \
+                        (1 - self._momentum) * self.running_var
+            if self.num_batches_tracked < 2000:
+                out = SyncBatchnormFunction.apply(input, self.weight, self.bias, self.running_mean, self.running_var, self.eps)
+
             torch.cuda.nvtx.range_pop()
-            out = SyncBatchnormFunction.apply(input, self.weight, self.bias, mean, var, self.eps)
         return out.to(cast)
 class SyncBatchnormFunction(Function):
 
@@ -129,7 +142,6 @@ class SyncBatchnormFunction(Function):
 
         torch.cuda.nvtx.range_pop()
         return c_last_input.transpose(1, -1).contiguous().clone()
-
     @staticmethod
     def backward(ctx, grad_output):
         torch.cuda.nvtx.range_push("sync_BN_bw")
@@ -137,39 +149,25 @@ class SyncBatchnormFunction(Function):
         # mu = 1./N*np.sum(h, axis = 0)
         # var = 1./N*np.sum((h-mu)**2, axis = 0)
         c_last_input, weight, bias, running_mean, running_variance = ctx.saved_tensors
-        bsz = c_last_input.size(0)
 
         eps = ctx.eps
         grad_input = grad_weight = grad_bias = None
-        #running_mean = running_mean.mean(1).squeeze(1)
-        #running_variance = running_variance.mean(1).squeeze(1)
         num_features = running_mean.size()[0]
 
         # transpose it to channel last to support broadcasting for input with different rank
         torch.cuda.nvtx.range_push("carilli field")
         c_last_grad = grad_output.transpose(1, -1).contiguous()
         # squash non-channel dimension so we can easily calculate mean
-        c_grad = c_last_grad.view(bsz, -1, num_features).contiguous()
+        c_grad = c_last_grad.view(-1, num_features).contiguous()
         torch.cuda.nvtx.range_pop()
 
         # calculate grad_input
         if ctx.needs_input_grad[0]:
             # dh = gamma * (var + eps)**(-1. / 2.) * (dy - np.mean(dy, axis=0)
             #     - (h - mu) * (var + eps)**(-1.0) * np.mean(dy * (h - mu), axis=0))
-            mean_dy = c_grad.mean(1)
+            mean_dy = c_grad.mean(0)
             mean_dy_xmu = (c_last_grad * (c_last_input -
-                                          running_mean)).view(bsz, -1, num_features).mean(1)
-
-            mean_dy.div_(bsz)
-            mean_dy -= mean_dy.sum(0, keepdim=True)
-            mean_dy *= float(-1 * bsz/(bsz-1))
-            mean_dy.unsqueeze_(1).unsqueeze_(1)
-
-            mean_dy_xmu.div_(bsz)
-            mean_dy_xmu -= mean_dy_xmu.sum(0, keepdim=True)
-            mean_dy_xmu *= float(-1 * bsz / (bsz-1))
-            mean_dy_xmu.unsqueeze_(1).unsqueeze_(1)
-
+                                          running_mean)).view(-1, num_features).mean(0)
             c_last_grad_input = (c_last_grad - mean_dy - (c_last_input - running_mean) / (
                 running_variance + eps) * mean_dy_xmu) / torch.sqrt(running_variance + eps)
             if weight is not None:

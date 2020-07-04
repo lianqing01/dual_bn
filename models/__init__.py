@@ -32,4 +32,8 @@ from .resnet_v1 import *
 from .resnet_constraintbn_init_v2 import *
 from .resnet_aka_brn import *
 from .resnet_brn import *
-from .resnet_aka_unbiasbn import *
+from .batchnorm_movingaverage import *
+from .batchnorm_movingaverage_v1 import *
+from .batchnorm_movingaverage_v2 import *
+from .batchnorm_augmented import *
+from .batchnorm_oracle import *

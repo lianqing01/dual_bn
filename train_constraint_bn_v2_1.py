@@ -376,8 +376,6 @@ def train(epoch):
         t_m, t_s = divmod(remain_time, 60)
         t_h, t_m = divmod(t_m, 60)
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-        import pdb
-        pdb.set_trace()
 
 
         if (batch_idx+1) % args.print_freq == 0:

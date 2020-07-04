@@ -126,8 +126,7 @@ class Constraint_Norm(nn.Module):
     def forward(self, x):
 
         # mean
-        self.pre_mean = x.mean(self.norm_dim)
-        self.pre_var = (x*x).mean(self.norm_dim)
+
         if self.pre_affine:
             if self.sample_noise and self.training:
                 if self.noise_data_dependent:
@@ -216,7 +215,7 @@ class Constraint_Lagrangian(nn.Module):
         self.get_optimal_lagrangian = get_optimal_lagrangian
 
     def get_weighted_mean(self, x, norm_dim):
-        mean = x.mean(dim=norm_dim)
+        mean = x.mean(dim=norm_dim)**2
         self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
         self.weight_mean = self.weight_mean.mean()
         return mean
@@ -224,7 +223,7 @@ class Constraint_Lagrangian(nn.Module):
 
     def get_weighted_var(self, x, norm_dim):
         var = x**2 - 1
-        var = var.mean(dim=norm_dim)
+        var = var.mean(dim=norm_dim)**2
         self.weight_var = LagrangianFunction.apply(var, self.lambda_)
         self.weight_var = self.weight_var.mean()
         return var+1
