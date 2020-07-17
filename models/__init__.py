@@ -37,3 +37,5 @@ from .batchnorm_movingaverage_v1 import *
 from .batchnorm_movingaverage_v2 import *
 from .batchnorm_augmented import *
 from .batchnorm_oracle import *
+from .resnet_inverse import *
+from .resnet_constraintbn_bn_relu import *

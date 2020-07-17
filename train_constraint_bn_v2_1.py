@@ -101,7 +101,7 @@ parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--decrease_affine_lr', default=1, type=float)
 parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
 parser.add_argument('--affine_momentum', default=0.9, type=float)
-parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
+parser.add_argument('--affine_decay', default=1e-4, type=float)
 
 # for adding noise
 parser.add_argument('--sample_noise', default=False, type=str2bool)
@@ -213,47 +213,28 @@ for m in net.modules():
         m.weight_decay = args.constraint_decay
         m.get_optimal_lagrangian = args.get_optimal_lagrangian
         constraint_param.extend(list(map(id, m.parameters())))
-affine_param = []
-for m in net.modules():
-    if isinstance(m, Constraint_Norm):
-        affine_param.extend(list(map(id, m.parameters())))
-if args.decrease_with_conv_bias:
-    for m in net.modules():
-        if isinstance(m, nn.Conv2d):
-            affine_param.extend(list(map(id, m.bias)))
+affine_param = [p[1] for p in net.named_parameters() if 'mu_' in p[0]]
+affine_param.extend([p[1] for p in net.named_parameters() if 'gamma_' in p[0]])
+affine_param_id = [id(i) for i in affine_param]
 
-
-if args.decrease_affine_lr == 1:
-    origin_param = filter(lambda p:id(p) not in constraint_param, net.parameters())
-
-    optimizer = optim.SGD([
-                       {'params': origin_param},
-                       {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
-                            'lr': args.constraint_lr,
-                            'weight_decay': args.constraint_decay},
-                       ],
-                      lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
-
+origin_param = filter(lambda p:id(p) not in affine_param_id and id(p) not in constraint_param, net.parameters())
+if args.decrease_affine_lr is not None:
+    affine_lr = args.decrease_affine_lr * args.lr
 else:
-    origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, net.parameters())
-    if args.decrease_affine_lr is not None:
-        affine_lr = args.decrease_affine_lr * args.lr
-    else:
-        affine_lr = args.lr
+    affine_lr = args.lr
 
-    optimizer = optim.SGD([
-                       {'params': origin_param},
-                       {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
-                            'lr': args.constraint_lr,
-                            'weight_decay': args.constraint_decay},
-                       {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, net.parameters()),
-                            'lr': affine_lr,
-                            'weight_decay': args.affine_weight_decay,
-                            'momentum': args.affine_momentum}
-                       ],
-                      lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
+optimizer = optim.SGD([
+                    {'params': origin_param},
+                    {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
+                        'lr': args.constraint_lr,
+                        'weight_decay': args.constraint_decay},
+                    {'params': affine_param,
+                        'lr': affine_lr,
+                        'weight_decay': args.affine_decay,
+                        'momentum': args.affine_momentum}
+                    ],
+                    lr=args.lr, momentum=0.9,
+                    weight_decay=args.decay)
 '''
 constraint_optimizer = (optim.SGD(
                     filter(lambda p:id(p) in constraint_param, net.parameters()),
@@ -446,9 +427,19 @@ def train(epoch):
     wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
 
+    epoch_mu = []
+    epoch_gamma = []
+    epoch_mu_error = []
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
+            mean_, var_ = m.get_mean_var()
+            epoch_mu.append(m.mu_.mean())
+            epoch_gamma.append(m.gamma_.mean())
+            epoch_mu_error.append((m.mu_ / mean_).mean())
             m.reset_norm_statistics()
+    mu_.append(epoch_mu)
+    gamma_.append(epoch_gamma)
+    mu_error.append(epoch_mu_error)
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
@@ -837,6 +828,9 @@ if torch.__version__ < '1.4.1':
 if not args.resume:
     with torch.no_grad():
         _initialize(0)
+mu_ = []
+gamma_ = []
+mu_error = []
 
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
@@ -846,22 +840,9 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
-    if epoch % args.get_norm_freq == 0:
-        if args.noise_data_dependent:
-            args.sample_noise = True
-            for i in range(5):
-                get_norm_stat(epoch)
-
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    if epoch<=100:
-                        m.summarize_norm_stat()
-                    m.reset_norm_statistics()
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    m.sample_noise=True
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
+    torch.save([mu_, gamma_, mu_error], "results/{}/norm_stat.pth".format(args.log_dir))
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:

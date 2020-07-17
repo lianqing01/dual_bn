@@ -58,6 +58,7 @@ class Constraint_Norm(nn.Module):
         self.noise_gamma_ = []
         self.summarize_x_hat = []
         self.summarize_x_hat_noise = []
+        self.eps = 1e-5
 
     def store_norm_stat(self):
         self.noise_mu_.append(self.mu_.grad.clone().detach())
@@ -109,16 +110,15 @@ class Constraint_Norm(nn.Module):
         if with_affine:
             self.old_gamma_ = self.gamma_
         self.var = self.var / self.tracking_times
-        self.gamma_.data/= (torch.sqrt(self.var.view(self.gamma_.size()).clamp(min=1e-3)) + 1e-4)
+        self.var -= 1
+        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * self.gamma_**2).data
 
     def _initialize_affine(self):
-        temp = self.post_affine_layer.u_.data * self.old_gamma_.data
-        self.post_affine_layer.u_.data.copy_(temp / (1e-4 + self.gamma_.data))
+        #temp = self.post_affine_layer.u_.data / (self.old_gamma_.data + self.eps)
+        #self.post_affine_layer.u_.data.copy_(temp * self.gamma_.data))
 
-        temp1 = self.post_affine_layer.u_.data * self.gamma_.data
-        temp *= self.old_mu_.data
-        temp1 *= self.mu_.data
-        self.post_affine_layer.c_.data -= (temp -temp1)
+
+        #self.post_affine_layer.c_.data -= (temp -temp1)
         del self.old_mu_
         del self.old_gamma_
 
@@ -129,12 +129,6 @@ class Constraint_Norm(nn.Module):
 
         if self.pre_affine:
             if self.sample_noise and self.training:
-                if self.noise_data_dependent:
-                    noise_mean = torch.normal(mean=0, std=self.noise_mu_std)
-                    noise_mean = noise_mean.view(self.mu_.size())
-                    x = x - (self.mu_ + noise_mean.detach())
-
-                else:
                     noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
                     noise_mean = noise_mean.view(self.mu_.size()).half()
                     x = x - (self.mu_ * noise_mean.detach())
@@ -147,21 +141,16 @@ class Constraint_Norm(nn.Module):
         # var
         if self.pre_affine:
             if self.sample_noise and self.training:
-                if self.noise_data_dependent:
-                    noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
-                    #noise_var = (self.gamma_ + noise_var) **2 / self.gamma_**2
-                    noise_var = noise_var.clamp(min=0)
-                    #x = x * self.gamma_ * noise_var.detach()
-                    x = x * (self.gamma_ + torch.sign(noise_var.detach()) * torch.sqrt(noise_var.abs()).detach())
-                else:
                     noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
                     noise_var = noise_var.view(self.gamma_.size()).half()
-                    x = x * (self.gamma_*noise_var)
+
+                    x = x / torch.sqrt(self.gamma_**2 * noise_var + self.eps)
             else:
-                x = x * self.gamma_
-            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+
+                x = x / torch.sqrt(self.gamma_**2 + self.eps)
+                var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         else:
-            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         self.var += var.detach()
 
         self.tracking_times += 1
@@ -215,15 +204,15 @@ class Constraint_Lagrangian(nn.Module):
         self.get_optimal_lagrangian = get_optimal_lagrangian
 
     def get_weighted_mean(self, x, norm_dim):
-        mean = x.mean(dim=norm_dim)**2
+        mean = x.mean(dim=norm_dim)
         self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
         self.weight_mean = self.weight_mean.mean()
         return mean
 
 
-    def get_weighted_var(self, x, norm_dim):
-        var = x**2 - 1
-        var = var.mean(dim=norm_dim)**2
+    def get_weighted_var(self, x,  gamma, norm_dim):
+        var = x**2 -1
+        var = var.mean(dim=norm_dim)
         self.weight_var = LagrangianFunction.apply(var, self.lambda_)
         self.weight_var = self.weight_var.mean()
         return var+1

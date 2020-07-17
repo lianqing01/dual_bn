@@ -20,6 +20,28 @@ model_urls = {
 }
 
 
+
+class Plain_norm(nn.Module):
+    def __init__(self, num_features):
+        super(Plain_norm, self).__init__()
+
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_var', torch.ones(num_features))
+        self.register_buffer('num_batches_tracked', torch.tensor(0, dtype=torch.long))
+
+    def forward(self, x):
+        with torch.no_grad():
+            mean = x.mean([0, 2, 3])
+            var = x.var([0, 2, 3])
+            self.running_mean*=0.9
+            self.running_mean += mean
+            self.running_var*=0.9
+            self.running_var+= var
+            self.num_batches_tracked += 1
+            return x
+
+
+
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -45,8 +67,10 @@ class BasicBlock(nn.Module):
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = Plain_norm(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
+        self.bn2 = Plain_norm(planes)
         self.downsample = downsample
         self.stride = stride
 
@@ -54,9 +78,11 @@ class BasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
+        out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -133,6 +159,7 @@ class resnet_nobn(nn.Module):
         self.base_width = width_per_group
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1,
                                bias=True)
+        self.bn = Plain_norm(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
@@ -187,6 +214,7 @@ class resnet_nobn(nn.Module):
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
+        x = self.bn(x)
         x = self.relu(x)
 
         x = self.layer1(x)

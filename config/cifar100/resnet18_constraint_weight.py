@@ -2,9 +2,9 @@ import subprocess
 import argparse
 import time
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('--model', default="resnet_constraint50", type=str, help='learning rate')
+parser.add_argument('--model', default="resnet_constraint18", type=str, help='learning rate')
 parser.add_argument('--gpus', default=[0,1,2,3], type=list)
-parser.add_argument('--constraint_weight', default=[10], type=list)
+parser.add_argument('--constraint_weight', default=[10, 1, 0.1], type=list)
 
 
 args = parser.parse_args()

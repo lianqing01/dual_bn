@@ -42,7 +42,7 @@ class BatchNorm_mvv22d(_BatchNorm):
 
     warned = False
 
-    def __init__(self, num_features, eps=1e-4, momentum=0.2, affine=True, track_running_stats=True, channel_last=False):
+    def __init__(self, num_features, eps=1e-4, momentum=0.1, affine=True, track_running_stats=True, channel_last=False):
         if channel_last == True:
             raise AttributeError("channel_last is not supported by primitive BatchNorm_mvv22d implementation. Try install apex with `--cuda_ext` if channel_last is desired.")
 
@@ -105,7 +105,13 @@ class BatchNorm_mvv22d(_BatchNorm):
                 #        = 1 / N * sum ( x - mean_x ) ** 2
                 #        = 1 / N * sum (x**2) - mean_x**2
                 var = sqr_mean - mean.pow(2)
+            if self.num_batches_tracked >=2000:
+                out = SyncBatchnormFunction.apply(input, self.weight, self.bias,\
+                                                  self.running_mean, self.running_var, self.eps,\
+                                                  self.running_mu_grad, self.running_gamma_grad,\
+                                                  self._momentum, self.num_batches_tracked)
 
+            with torch.no_grad():
                 if self.running_mean is not None:
                     self.running_mean = self._momentum * mean + \
                         (1 - self._momentum) * self.running_mean
@@ -115,22 +121,27 @@ class BatchNorm_mvv22d(_BatchNorm):
                     self.running_var = m / \
                         (m-1) * self._momentum * var + \
                         (1 - self._momentum) * self.running_var
+            if self.num_batches_tracked < 2000:
+                out = SyncBatchnormFunction.apply(input, self.weight, self.bias,\
+                                                  self.running_mean, self.running_var, self.eps,\
+                                                  self.running_mu_grad, self.running_gamma_grad,\
+                                                  self._momentum, self.num_batches_tracked)
 
-            out = SyncBatchnormFunction.apply(input, self.weight, self.bias, self.running_mean, self.running_var, self.eps, self.running_mu_grad, self.running_gamma_grad, self._momentum)
             torch.cuda.nvtx.range_pop()
         return out.to(cast)
 class SyncBatchnormFunction(Function):
 
     @staticmethod
-    def forward(ctx, input, weight, bias, running_mean, running_variance, eps, running_mu_grad, running_gamma_grad, momentum):
+    def forward(ctx, input, weight, bias, running_mean, running_variance, eps, running_mu_grad, running_gamma_grad, momentum, num_batches_tracked):
         torch.cuda.nvtx.range_push("sync_BN_fw")
         # transpose it to channel last to support broadcasting for input with different rank
         c_last_input = input.transpose(1, -1).contiguous().clone()
 
         ctx.save_for_backward(c_last_input, weight, bias,
-                              running_mean, running_variance, running_mu_grad, running_gamma_grad, momentum)
+                              running_mean, running_variance, running_mu_grad, running_gamma_grad)
         ctx.eps = eps
         ctx.momentum = momentum
+        ctx.num_batches_tracked = num_batches_tracked
 
         c_last_input = (c_last_input - running_mean) / \
             torch.sqrt(running_variance + eps)
@@ -151,6 +162,7 @@ class SyncBatchnormFunction(Function):
         c_last_input, weight, bias, running_mean, running_variance, running_mu_grad, running_gamma_grad = ctx.saved_tensors
 
         eps = ctx.eps
+        num_batches_tracked = ctx.num_batches_tracked
         grad_input = grad_weight = grad_bias = None
         num_features = running_mean.size()[0]
         momentum = ctx.momentum
@@ -168,10 +180,15 @@ class SyncBatchnormFunction(Function):
             #     - (h - mu) * (var + eps)**(-1.0) * np.mean(dy * (h - mu), axis=0))
             mean_dy = c_grad.mean(0)
             mean_dy_xmu = (c_last_grad * (c_last_input -
-                                          running_mean)).view(-1, num_features).mean(0)
+                                          running_mean) / torch.sqrt(running_variance + ctx.eps)).view(-1, num_features).mean(0)
+            if num_batches_tracked <= 2000:
+                 c_last_grad_input = (c_last_grad - mean_dy - (c_last_input - running_mean) / torch.sqrt(
+                running_variance + eps) * mean_dy_xmu) / torch.sqrt(running_variance + eps)
+
             running_mu_grad = momentum * mean_dy + (1 - momentum) * running_mu_grad
             running_gamma_grad = momentum * mean_dy_xmu + (1 - momentum) * running_gamma_grad
-            c_last_grad_input = (c_last_grad - running_mu_grad - (c_last_input - running_mean) / (
+            if num_batches_tracked >2000:
+                c_last_grad_input = (c_last_grad - running_mu_grad - (c_last_input - running_mean) / torch.sqrt(
                 running_variance + eps) * running_gamma_grad) / torch.sqrt(running_variance + eps)
             if weight is not None:
                 c_last_grad_input.mul_(weight)
@@ -191,4 +208,4 @@ class SyncBatchnormFunction(Function):
             grad_bias = c_grad.sum(0)
 
         torch.cuda.nvtx.range_pop()
-        return grad_input, grad_weight, grad_bias, None, None, None, None, None
+        return grad_input, grad_weight, grad_bias, None, None, None, None, None, None, None

@@ -1,0 +1,12 @@
+python train_constraint_bn_v2_1.py \
+    --model resnet_constraint18 \
+    --log_dir vgg/resnet18_constraint_bsz_128 \
+    --lr 0.1 \
+    --constraint_lr 0.01 \
+    --batch-size 128 \
+    --dataset CIFAR100 \
+    --constraint_decay 0.1 \
+    --lambda_constraint_weight 10 \
+    --lambda_weight_mean 1 \
+    --grad_clip 1 \
+    --decrease_affine_lr 1
