@@ -430,16 +430,25 @@ def train(epoch):
     epoch_mu = []
     epoch_gamma = []
     epoch_mu_error = []
+    epoch_gamma_error = []
+    real_mus = []
+    real_gammas = []
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
             mean_, var_ = m.get_mean_var()
+            real_mu, real_gamma = m.get_real_mean_var()
             epoch_mu.append(m.mu_.mean())
             epoch_gamma.append(m.gamma_.mean())
-            epoch_mu_error.append((m.mu_ / mean_).mean())
-            m.reset_norm_statistics()
+            real_mus.append(real_mu.mean())
+            real_gammas.append(real_gamma.mean())
+            epoch_mu_error.append( ((torch.abs(m.mu_.view(-1) - real_mu) / (real_mu + 1e-4))).mean())
+            epoch_gamma_error.append( (torch.abs(m.gamma_.view(-1).abs() - real_gamma) / (real_gamma + 1e-4 )).mean())
     mu_.append(epoch_mu)
     gamma_.append(epoch_gamma)
+    real_mu_.append(real_mus)
+    real_gamma_.append(real_gammas)
     mu_error.append(epoch_mu_error)
+    gamma_error.append(epoch_gamma_error)
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
@@ -639,9 +648,6 @@ def get_norm_stat(epoch):
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        for m in net.modules():
-            if isinstance(m, Constraint_Norm):
-                m.store_norm_stat()
 
 
 
@@ -658,6 +664,9 @@ def test(epoch):
     acc2 = AverageMeter(100)
     acc3 = AverageMeter(100)
 
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.reset_norm_statistics()
     correct = 0
     total = 0
     for m in net.modules():
@@ -739,9 +748,6 @@ def test(epoch):
 
 
 
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
-            m.reset_norm_statistics()
 
     return (test_loss/batch_idx, 100.*correct/total)
 
@@ -830,7 +836,10 @@ if not args.resume:
         _initialize(0)
 mu_ = []
 gamma_ = []
+real_mu_ = []
+real_gamma_ = []
 mu_error = []
+gamma_error = []
 
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
@@ -841,8 +850,7 @@ for epoch in range(start_epoch, args.epoch):
         args.lambda_constraint_weight = 0
 
     train_loss, reg_loss, train_acc = train(epoch)
-    test_loss, test_acc = test(epoch)
-    torch.save([mu_, gamma_, mu_error], "results/{}/norm_stat.pth".format(args.log_dir))
+    torch.save([mu_, gamma_, real_mu_, real_gamma_, mu_error, gamma_error], "results/{}/norm_stat.pth".format(args.log_dir))
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
@@ -853,3 +861,4 @@ for epoch in range(start_epoch, args.epoch):
     if ((epoch+1) % 10) == 0:
         save_checkpoint(test_acc, epoch)
 
+    test_loss, test_acc = test(epoch)
