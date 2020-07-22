@@ -146,10 +146,10 @@ class Constraint_Norm(nn.Module):
             if self.sample_noise and self.training:
                     noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
                     noise_mean = noise_mean.view(self.mu_.size()).clamp(min=0.1, max=10)
-                    x = x - (self.mu_ * noise_mean.detach())
+                    x = x - (self.mu_ )
             else:
                 x = x - self.mu_
-            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+            mean = self.lagrangian.get_weighted_mean(x/torch.sqrt(self.gamma_**2 + self.eps).detach(), self.norm_dim)
         else:
             mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         self.mean += mean.detach()
@@ -161,7 +161,7 @@ class Constraint_Norm(nn.Module):
                     noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
                     noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
 
-                    x = x / torch.sqrt(self.gamma_**2 + self.eps) * torch.sqrt(noise_var.detach())
+                    x = x / torch.sqrt(self.gamma_**2*noise_var.detach() + self.eps)
             else:
 
                 x = x / torch.sqrt(self.gamma_**2 + self.eps)

@@ -1,6 +1,6 @@
 python train_constraint_bn_v2_1.py \
     --model resnet_constraint_bn_relu18 \
-    --log_dir vgg/resnet18_constraint_bsz_128_bn-relu_mu \
+    --log_dir vgg/resnet18_constraint_bsz_128_bn-relu \
     --lr 0.1 \
     --constraint_lr 0.01 \
     --batch-size 128 \
