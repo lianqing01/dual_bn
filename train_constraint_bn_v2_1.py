@@ -125,6 +125,7 @@ parser.add_argument('--initialize_by_pretrain', action='store_true', default=Fal
 parser.add_argument('--max_pretrain_epoch', default=20, type=int)
 parser.add_argument('--add_noise', default=None, type=str)
 parser.add_argument('--lambda_weight_mean', default=1, type=float)
+parser.add_argument('--norm_layer', default=None, type=str)
 
 
 args = parser.parse_args()
@@ -196,8 +197,18 @@ print(num_classes)
 
 
 
+import models
 logger.info('==> Building model..')
-net = models.__dict__[args.model](num_classes=num_classes)
+if args.norm_layer is not None and args.norm_layer != 'False':
+    if args.norm_layer == 'cbn':
+        norm_layer =  models.__dict__['Constraint_Norm2d']
+    elif args.norm_layer == 'cbn_mean':
+        norm_layer = models.__dict__['Constraint_Norm_mean2d']
+    elif args.norm_layer == 'cbn_mu':
+        norm_layer = models.__dict__['Constraint_Norm_mu2d']
+    else:
+        norm_layer = None
+net = models.__dict__[args.model](num_classes=num_classes, norm_layer=norm_layer)
 if use_cuda:
     net.cuda()
     logger.info(torch.cuda.device_count())
@@ -214,7 +225,6 @@ for m in net.modules():
         m.get_optimal_lagrangian = args.get_optimal_lagrangian
         constraint_param.extend(list(map(id, m.parameters())))
 affine_param = [p[1] for p in net.named_parameters() if 'mu_' in p[0]]
-affine_param.extend([p[1] for p in net.named_parameters() if 'gamma_' in p[0]])
 affine_param_id = [id(i) for i in affine_param]
 
 origin_param = filter(lambda p:id(p) not in affine_param_id and id(p) not in constraint_param, net.parameters())
@@ -270,7 +280,7 @@ logger.info(args.lr)
 
 if args.update_affine_only == True:
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             m.update_affine_only = True
 
 
@@ -294,7 +304,7 @@ def train(epoch):
     xi_ = 0
 
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             m.reset_norm_statistics()
 
     for batch_idx, (inputs, targets) in enumerate(trainloader):
@@ -344,7 +354,7 @@ def train(epoch):
         loss.backward()
         if args.add_grad_noise == True:
             for m in net.modules():
-                if isinstance(m, Constraint_Norm):
+                if isinstance(m, norm_layer):
                     m.add_grad_noise_()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         if use_cuda:
@@ -390,7 +400,7 @@ def train(epoch):
             mean = []
             var = []
             for m in net.modules():
-                if isinstance(m, Constraint_Norm):
+                if isinstance(m, norm_layer):
                     mean_, var_ = m.get_mean_var()
                     mean.append(mean_.abs())
                     var.append(var_.abs())
@@ -434,14 +444,14 @@ def train(epoch):
     real_mus = []
     real_gammas = []
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             mean_, var_ = m.get_mean_var()
             real_mu, real_gamma = m.get_real_mean_var()
             epoch_mu.append(m.mu_.mean())
             epoch_gamma.append(m.gamma_.mean())
             real_mus.append(real_mu.mean())
             real_gammas.append(real_gamma.mean())
-            epoch_mu_error.append( ((torch.abs(m.mu_.view(-1) - real_mu) / real_mu))).mean())
+            epoch_mu_error.append((torch.abs(m.mu_.view(-1) - real_mu) / real_mu).mean())
             epoch_gamma_error.append( (torch.abs(m.gamma_.view(-1).abs() - real_gamma) / (real_gamma  )).mean())
     mu_.append(epoch_mu)
     gamma_.append(epoch_gamma)
@@ -469,7 +479,7 @@ def _initialize(epoch):
 
     num_norm = 0
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             m.reset_norm_statistics()
             num_norm+=1
     for layer in range(num_norm):
@@ -532,7 +542,7 @@ def _initialize(epoch):
                     mean = []
                     var = []
                     for m in net.modules():
-                        if isinstance(m, Constraint_Norm):
+                        if isinstance(m, norm_layer):
                             mean_, var_ = m.get_mean_var()
                             mean.append(mean_.abs())
                             var.append(var_.abs())
@@ -566,7 +576,7 @@ def _initialize(epoch):
             if i == 0:
                 track_layer = 0
                 for m in net.modules():
-                    if isinstance(m, Constraint_Norm):
+                    if isinstance(m, norm_layer):
                         if track_layer == layer:
                             m._initialize_mu()
                             break
@@ -575,7 +585,7 @@ def _initialize(epoch):
             elif i == 1:
                 track_layer = 0
                 for m in net.modules():
-                    if isinstance(m, Constraint_Norm):
+                    if isinstance(m, norm_layer):
                         if track_layer == layer:
                             m._initialize_gamma()
                             break
@@ -584,7 +594,7 @@ def _initialize(epoch):
 
 
             for m in net.modules():
-                if isinstance(m, Constraint_Norm):
+                if isinstance(m, norm_layer):
                     m.reset_norm_statistics()
 
 
@@ -665,12 +675,12 @@ def test(epoch):
     acc3 = AverageMeter(100)
 
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             m.reset_norm_statistics()
     correct = 0
     total = 0
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
             m.reset_norm_statistics()
     for batch_idx, (inputs, targets) in enumerate(testloader):
         if use_cuda:
@@ -706,7 +716,7 @@ def test(epoch):
     mean = []
     var = []
     for m in net.modules():
-        if isinstance(m, Constraint_Norm):
+        if isinstance(m, norm_layer):
                 mean_, var_ = m.get_mean_var()
                 mean.append(mean_.abs())
                 var.append(var_.abs())
@@ -752,7 +762,7 @@ def test(epoch):
     return (test_loss/batch_idx, 100.*correct/total)
 
 for m in net.modules():
-    if isinstance(m, Constraint_Norm):
+    if isinstance(m, norm_layer):
         m.sample_noise = args.sample_noise
         m.noise_data_dependent = args.noise_data_dependent
         m.noise_std = torch.sqrt(torch.Tensor([args.noise_std])[0].to(device))

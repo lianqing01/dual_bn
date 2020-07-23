@@ -39,3 +39,5 @@ from .batchnorm_augmented import *
 from .batchnorm_oracle import *
 from .resnet_inverse import *
 from .resnet_constraintbn_bn_relu import *
+from .constraint_bn_v2_mean import *
+from .constraint_bn_v2_mu import *

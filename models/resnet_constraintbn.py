@@ -128,6 +128,7 @@ class resnet_constraint(nn.Module):
         if norm_layer is None:
             norm_layer = Constraint_Norm2d
         self._norm_layer = norm_layer
+        print(norm_layer)
 
         self.inplanes = 64
         self.dilation = 1
