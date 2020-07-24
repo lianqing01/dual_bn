@@ -155,7 +155,7 @@ class Constraint_Norm(nn.Module):
                 noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
                 noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10).detach()
 
-                x = x / torch.sqrt((self.gamma_ * noise_var)**2 + self.eps)
+                x = x*noise_var / torch.sqrt((self.gamma_ )**2 + self.eps)
         else:
 
             x = x / torch.sqrt(self.gamma_**2 + self.eps)
