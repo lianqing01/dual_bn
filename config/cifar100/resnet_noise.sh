@@ -1,4 +1,5 @@
 python train.py --model $1 \
+    --norm_layer bn \
     --log_dir $1+_noise_bsz_128+$2 \
     --dataset CIFAR100 \
     --batch-size 128 \

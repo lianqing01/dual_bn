@@ -141,28 +141,30 @@ class Constraint_Norm(nn.Module):
         # mean
         with torch.no_grad():
             self.real_mu += x.mean(dim=self.norm_dim)
-        x_hat = (x - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps)
+
+        mean = self.lagrangian.get_weighted_mean((x - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps).detach(), self.norm_dim)
+        var = self.lagrangian.get_weighted_var((x - self.mu_.detach()) / torch.sqrt(self.gamma_**2 + self.eps), self.gamma_, self.norm_dim)
         if self.sample_noise and self.training:
                 noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
-                noise_mean = noise_mean.view(self.mu_.size()).clamp(min=0.1, max=10)
+                noise_mean = noise_mean.view(self.mu_.size())
                 x = x - (self.mu_ * noise_mean.detach() )
         else:
             x = x - self.mu_
+
+
         # var
         with torch.no_grad():
             self.real_gamma += torch.sqrt((x**2).clamp(min=0)).mean(dim=self.norm_dim)
         if self.sample_noise and self.training:
                 noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
-                noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10).detach()
+                noise_var = noise_var.view(self.gamma_.size())
 
                 x = x*noise_var / torch.sqrt((self.gamma_ )**2 + self.eps)
         else:
 
             x = x / torch.sqrt(self.gamma_**2 + self.eps)
 
-        mean = self.lagrangian.get_weighted_mean(x_hat, self.norm_dim)
         self.mean += mean.detach()
-        var = self.lagrangian.get_weighted_var(x_hat, self.gamma_, self.norm_dim)
         self.var += var.detach()
 
         self.tracking_times += 1

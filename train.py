@@ -174,6 +174,10 @@ if args.norm_layer is not None and args.norm_layer != 'False':
         norm_layer = models.__dict__['BatchNorm_augmented2d']
     elif args.norm_layer == 'mv_oracle':
         norm_layer = models.__dict__['BatchNorm_oracle2d']
+    elif args.norm_layer == 'bn':
+        norm_layer = models.__dict__['BatchNorm2d']
+    elif args.norm_layer == 'bn_n1':
+        norm_layer = models.__dict__['BatchNorm_n1_2d']
 
 
     else:

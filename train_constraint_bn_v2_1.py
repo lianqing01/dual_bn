@@ -206,6 +206,8 @@ if args.norm_layer is not None and args.norm_layer != 'False':
         norm_layer = models.__dict__['Constraint_Norm_mean2d']
     elif args.norm_layer == 'cbn_mu':
         norm_layer = models.__dict__['Constraint_Norm_mu2d']
+    elif args.norm_layer == 'cbn_notheta':
+        norm_layer = models.__dict__['Constraint_Norm_notheta_2d']
     else:
         norm_layer = None
 net = models.__dict__[args.model](num_classes=num_classes, norm_layer=norm_layer)
@@ -856,8 +858,6 @@ for epoch in range(start_epoch, args.epoch):
     lr1 = optimizer.param_groups[1]['lr']
     logger.info("begin: epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
 
-    if epoch == args.decay_constraint:
-        args.lambda_constraint_weight = 0
 
     train_loss, reg_loss, train_acc = train(epoch)
     torch.save([mu_, gamma_, real_mu_, real_gamma_, mu_error, gamma_error], "results/{}/norm_stat.pth".format(args.log_dir))
