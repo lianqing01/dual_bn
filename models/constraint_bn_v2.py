@@ -27,6 +27,129 @@ class LagrangianFunction(Function):
         return grad_input, grad_weight
 
 
+class LagrangianFunction_v1(Function):
+    # if the lagrangian is not right, pass it for calculate the gradient for \theta
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+        output = input * weight
+        mask = output >= 0
+        output *= mask
+        ctx.save_for_backward(input, weight, mask)
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight, mask = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+            grad_input *= mask
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
+class LagrangianFunction_v2(Function):
+    # if the lagrangian is not right, set the multiplier as zero.
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+        output = input * weight
+        weight.data[output<0]*=0
+        output = input * weight
+        ctx.save_for_backward(input, weight)
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
+class LagrangianFunction_v3(Function):
+    # if the lagrangian is not right, set the multiplier as negative.
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+
+        output = input * weight
+        weight.data[output<0]*=-1
+        output = input * weight
+        ctx.save_for_backward(input, weight)
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
+class LagrangianFunction_v4(Function):
+    # if the lagrangian is not right, set the multiplier as negative.
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+
+        output = input * weight
+        input.data[output>0]*=-1
+        output = input * weight
+        ctx.save_for_backward(input, weight)
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
+class LagrangianFunction_v5(Function):
+    # if the lagrangian is not right, set the multiplier as negative.
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+        # get the optimal weight
+        output = input * weight
+        ctx.save_for_backward(input, weight)
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
+
 class Constraint_Norm(nn.Module):
 
     def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False, pre_affine=True, post_affine=True):
@@ -114,21 +237,26 @@ class Constraint_Norm(nn.Module):
 
     def _initialize_mu(self, with_affine=False):
         self.mean = self.mean / self.tracking_times
-        if with_affine:
-            self.old_mu_ = self.mu_
+        self.old_mu_ = self.mu_.clone()
 
-        self.mu_.data += self.mean.view(self.mu_.size())
+        self.mu_.data += self.mean.view(self.mu_.size())  * torch.sqrt(self.gamma_**2 + self.eps)
 
     def _initialize_gamma(self, with_affine=False):
-        if with_affine:
-            self.old_gamma_ = self.gamma_
+        self.old_gamma_ = self.gamma_.clone()
         self.var = self.var / self.tracking_times
         self.var -= 1
-        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * self.gamma_**2).data
+        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps) ).data
 
-    def _initialize_affine(self):
+    def _initialize_affine(self, resume=None):
         #temp = self.post_affine_layer.u_.data / (self.old_gamma_.data + self.eps)
         #self.post_affine_layer.u_.data.copy_(temp * self.gamma_.data))
+        if resume is not None and resume is not False:
+
+            self.post_affine_layer.u_.data = self.post_affine_layer.u_ * \
+                            torch.sqrt(self.gamma_**2 + self.eps) / torch.sqrt(self.old_gamma_**2 + self.eps)
+
+            self.post_affine_layer.c_.data = self.post_affine_layer.c_ + \
+                        (self.post_affine_layer.u_ * (self.mu_ - self.old_mu_) / torch.sqrt(self.gamma_**2 + self.eps))
 
 
         #self.post_affine_layer.c_.data -= (temp -temp1)
@@ -139,30 +267,34 @@ class Constraint_Norm(nn.Module):
     def forward(self, x):
 
         # mean
-        with torch.no_grad():
-            self.real_mu += x.mean(dim=self.norm_dim)
 
-        mean = self.lagrangian.get_weighted_mean((x - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps).detach(), self.norm_dim)
-        var = self.lagrangian.get_weighted_var((x - self.mu_.detach()) / torch.sqrt(self.gamma_**2 + self.eps), self.gamma_, self.norm_dim)
-        if self.sample_noise and self.training:
-                noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
-                noise_mean = noise_mean.view(self.mu_.size())
-                x = x - (self.mu_ * noise_mean.detach() )
-        else:
-            x = x - self.mu_
+        if self.training and self.sample_noise is True:
+            temp_x = (x - self.mu_) / (torch.sqrt(self.gamma_**2 + self.eps))
+            mean = self.lagrangian.get_weighted_mean(temp_x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(temp_x, self.gamma_, self.norm_dim)
+
+        if self.pre_affine:
+            if self.sample_noise and self.training:
+                    noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
+                    noise_mean = noise_mean.view(self.mu_.size()).clamp(min=0.1, max=10)
+                    x = x - (self.mu_ * noise_mean.detach())
+            else:
+                x = x - self.mu_
+
+        if self.pre_affine:
+            if self.sample_noise and self.training:
+                    noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
+                    noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
+
+                    x = x / torch.sqrt((self.gamma_ * noise_var.detach())**2 + self.eps)
+            else:
+
+                x = x / torch.sqrt(self.gamma_**2 + self.eps)
+        if not self.training or self.sample_noise is False:
+            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
 
 
-        # var
-        with torch.no_grad():
-            self.real_gamma += torch.sqrt((x**2).clamp(min=0)).mean(dim=self.norm_dim)
-        if self.sample_noise and self.training:
-                noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
-                noise_var = noise_var.view(self.gamma_.size())
-
-                x = x*noise_var / torch.sqrt((self.gamma_ )**2 + self.eps)
-        else:
-
-            x = x / torch.sqrt(self.gamma_**2 + self.eps)
 
         self.mean += mean.detach()
         self.var += var.detach()
@@ -209,7 +341,7 @@ class Constraint_Norm2d(Constraint_Norm):
 
 class Constraint_Lagrangian(nn.Module):
 
-    def __init__(self, num_features, weight_decay=1e-4, get_optimal_lagrangian=False):
+    def __init__(self, num_features, weight_decay=1e-4, get_optimal_lagrangian=False, lag_function=LagrangianFunction):
         super(Constraint_Lagrangian, self).__init__()
         self.num_features = num_features
         self.lambda_ = nn.Parameter(torch.Tensor(num_features))
@@ -219,25 +351,29 @@ class Constraint_Lagrangian(nn.Module):
         self.xi_.data.fill_(0)
         self.weight_decay = weight_decay
         self.get_optimal_lagrangian = get_optimal_lagrangian
+        self.lag_function = lag_function
+
+
 
     def get_weighted_mean(self, x, norm_dim):
         mean = x.mean(dim=norm_dim)
         self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
-        self.weight_mean = self.weight_mean.mean()
+        self.mean = mean
         return mean
 
 
     def get_weighted_var(self, x,  gamma, norm_dim):
         var = x**2 - 1
         var = var.mean(dim=norm_dim)
-        self.weight_var = LagrangianFunction.apply(var, self.lambda_)
-        self.weight_var = self.weight_var.mean()
+        self.weight_var = self.lag_function.apply(var, self.lambda_)
+        self.var = var
         return var+1
     def get_weight_mean_var(self):
-        return (self.weight_mean, self.weight_var)
+        return (self.weight_mean.mean(), self.weight_var.mean())
 
-    def get_weight_mean_var_abs(self):
-        return (self.weight_mean_abs, self.weight_var_abs)
+    def get_weight_mean_var_sum(self):
+        return (self.weight_mean.sum(), self.weight_var.sum())
+
 
 
 class Constraint_Affine(nn.Module):

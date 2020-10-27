@@ -26,7 +26,7 @@ import torchvision.datasets as datasets
 import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
-from utils import create_logger, str2bool, accuracy
+from utils import create_logger
 import wandb
 from models.constraint_bn_v2 import *
 try:
@@ -34,89 +34,105 @@ try:
 except:
     pass
 
-def get_parse():
-    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-    parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-    parser.add_argument('--resume', '-r', action='store_true',
-                        help='resume from checkpoint')
-    parser.add_argument('--model', default="ResNet18", type=str,
-                        help='model type (default: ResNet18)')
-    parser.add_argument('--load_model', type=str, default='')
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
 
-    parser.add_argument('--name', default='0', type=str, help='name of run')
-    parser.add_argument('--seed', default=0, type=int, help='random seed')
-    parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-    parser.add_argument('--epoch', default=200, type=int,
-                        help='total epochs to run')
-    parser.add_argument('--no-augment', dest='augment', action='store_false',
-                        help='use standard augmentation (default: True)')
-    parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
-    parser.add_argument('--log_dir', default="oracle_exp001")
-    parser.add_argument('--grad_clip', default=1)
-    parser.add_argument('--optim_loss', default="cross_entropy")
-    parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=10, type=int)
-    parser.add_argument('--warmup_noise', default=None, type=str)
-    parser.add_argument('--warmup_scale', default=10, type=float)
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
 
-    parser.add_argument('--reparam', default=False, type=str2bool)
-    parser.add_argument('--reparam_freq', default=1, type=int)
-    parser.add_argument('--optimal_multiplier', default=False, type=str2bool)
-    parser.add_argument('--multiplier_average', default=0.9, type=float)
-    parser.add_argument('--constraint_weighted_average', default=True, type=str2bool)
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
 
 
+parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--resume', '-r', action='store_true',
+                    help='resume from checkpoint')
+parser.add_argument('--model', default="ResNet18", type=str,
+                    help='model type (default: ResNet18)')
+parser.add_argument('--load_model', type=str, default='')
 
-    # param for constraint norm
-    parser.add_argument('--lambda_constraint_weight', default=0, type=float)
-    parser.add_argument('--constraint_lr', default=0.1, type=float)
-    parser.add_argument('--constraint_decay', default=1e-3, type=str)
-    parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
-    parser.add_argument('--decay_constraint', default=-1, type=int)
-    parser.add_argument('--update_affine_only', default=False, type=str2bool)
-
-    # two layer
-    parser.add_argument('--two_layer', action='store_true', default=False)
-
-    # for lr scheduler
-    parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
-    parser.add_argument('--schedule', default=[100,150])
-    parser.add_argument('--decrease_affine_lr', default=1, type=float)
-    parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
-    parser.add_argument('--affine_momentum', default=0.9, type=float)
-    parser.add_argument('--affine_decay', default=1e-4, type=float)
-
-    # for adding noise
-    parser.add_argument('--sample_noise', default=False, type=str2bool)
-    parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
-    parser.add_argument('--noise_std', default=0, type=float)
-    parser.add_argument('--lambda_noise_weight', default=1, type=float)
-    parser.add_argument('--noise_mean_std', default=0, type=float)
-    parser.add_argument('--noise_var_std', default=0, type=float)
+parser.add_argument('--name', default='0', type=str, help='name of run')
+parser.add_argument('--seed', default=0, type=int, help='random seed')
+parser.add_argument('--batch-size', default=128, type=int, help='batch size')
+parser.add_argument('--epoch', default=200, type=int,
+                    help='total epochs to run')
+parser.add_argument('--no-augment', dest='augment', action='store_false',
+                    help='use standard augmentation (default: True)')
+parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
+parser.add_argument('--log_dir', default="oracle_exp001")
+parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--optim_loss', default="cross_entropy")
+parser.add_argument('--num_classes', default=10, type=int)
+parser.add_argument('--print_freq', default=10, type=int)
+parser.add_argument('--warmup_noise', default=None, type=str)
+parser.add_argument('--warmup_scale', default=10, type=float)
 
 
 
-    # dataset
-    parser.add_argument('--dataset', default='CIFAR10', type=str)
-    parser.add_argument('--add_grad_noise', default=False, type=str2bool)
-    parser.add_argument('--get_norm_freq', default=1, type=int)
-    parser.add_argument('--aug_roi', default=0.1, type=float)
+# param for constraint norm
+parser.add_argument('--lambda_constraint_weight', default=0, type=float)
+parser.add_argument('--constraint_lr', default=0.1, type=float)
+parser.add_argument('--constraint_decay', default=1e-3, type=str)
+parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
+parser.add_argument('--decay_constraint', default=-1, type=int)
+parser.add_argument('--update_affine_only', default=False, type=str2bool)
+
+# two layer
+parser.add_argument('--two_layer', action='store_true', default=False)
+
+# for lr scheduler
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
+parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--decrease_affine_lr', default=1, type=float)
+parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
+parser.add_argument('--affine_momentum', default=0.9, type=float)
+parser.add_argument('--affine_decay', default=1e-4, type=float)
+
+# for adding noise
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
+parser.add_argument('--noise_std', default=0, type=float)
+parser.add_argument('--lambda_noise_weight', default=1, type=float)
+parser.add_argument('--noise_mean_std', default=0, type=float)
+parser.add_argument('--noise_var_std', default=0, type=float)
 
 
 
-    # pretrain
-    parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
-    parser.add_argument('--max_pretrain_epoch', default=20, type=int)
-    parser.add_argument('--add_noise', default=None, type=str)
-    parser.add_argument('--lambda_weight_mean', default=1, type=float)
-    parser.add_argument('--norm_layer', default=None, type=str)
+# dataset
+parser.add_argument('--dataset', default='CIFAR10', type=str)
+parser.add_argument('--add_grad_noise', default=False, type=str2bool)
+parser.add_argument('--get_norm_freq', default=1, type=int)
+parser.add_argument('--aug_roi', default=0.1, type=float)
 
 
-    args = parser.parse_args()
-    args.constraint_decay = float(args.constraint_decay)
-    return args
 
-args = get_parse()
+# pretrain
+parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
+parser.add_argument('--max_pretrain_epoch', default=20, type=int)
+parser.add_argument('--add_noise', default=None, type=str)
+parser.add_argument('--lambda_weight_mean', default=1, type=float)
+parser.add_argument('--norm_layer', default=None, type=str)
+
+
+args = parser.parse_args()
+args.constraint_decay = float(args.constraint_decay)
 
 use_cuda = torch.cuda.is_available()
 
@@ -125,9 +141,6 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 if args.seed != 0:
     torch.manual_seed(args.seed)
-
-
-
 
 args.log_dir = args.log_dir
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
@@ -228,9 +241,6 @@ affine_param = [p[1] for p in net.named_parameters() if 'mu_' in p[0]]
 affine_param_id = [id(i) for i in affine_param]
 
 origin_param = filter(lambda p:id(p) not in affine_param_id and id(p) not in constraint_param, net.parameters())
-args.lr = args.lr * args.batch_size / 128.
-args.constraint_lr = args.constraint_lr * args.batch_size / 128.
-
 if args.decrease_affine_lr is not None:
     affine_lr = args.decrease_affine_lr * args.lr
 else:
@@ -311,12 +321,9 @@ def train(epoch):
     lambda_ = 0
     xi_ = 0
 
-    num_channel = 0
     for m in net.modules():
         if isinstance(m, norm_layer):
             m.reset_norm_statistics()
-            num_channel+=m.num_features
-    lag_weight = args.lambda_constraint_weight
 
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
@@ -335,31 +342,15 @@ def train(epoch):
 
 
         # constraint loss
-        weight_mean = 0
-        weight_var = 0
-        num_layer = 0
+        weight_mean = []
+        weight_var = []
         for m in net.modules():
             if isinstance(m, Constraint_Lagrangian):
-                num_layer+=1
-                if args.constraint_weighted_average == True:
-                    weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                else:
-                    weight_mean_, weight_var_ = m.get_weight_mean_var_sum()
-                if args.optimal_multiplier:
-                    with torch.no_grad():
-                        m.xi_.data = m.xi_.data*args.multiplier_average + \
-                            (1 - args.multiplier_average) * m.mean.detach()*lag_weight / (args.constraint_decay * num_channel)
-                        m.lambda_.data = m.lambda_.data * args.multiplier_average + \
-                            (1 - args.multiplier_average) * m.var.detach() * lag_weight / (args.constraint_decay * num_channel)
-                weight_mean += weight_mean_
-                weight_var += weight_var_
-        if args.constraint_weighted_average == False:
-            weight_mean /= num_channel
-            weight_var /= num_channel
-        else:
-            weight_mean /= num_layer
-            weight_var /= num_layer
-
+                weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                weight_mean.append(weight_mean_)
+                weight_var.append(weight_var_)
+        weight_mean = torch.stack(weight_mean).mean()
+        weight_var = torch.stack(weight_var).mean()
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
         constraint_loss = args.lambda_constraint_weight * constraint_loss
@@ -510,10 +501,9 @@ def _initialize(epoch):
             m.reset_norm_statistics()
             num_norm+=1
     for layer in range(num_norm):
-        print("init layer: {}".format(layer))
         for i in range(3):
             for batch_idx, (inputs, targets) in enumerate(trainloader):
-                if batch_idx>8 * 128/args.batch_size:
+                if batch_idx>20 * 128/args.batch_size:
                     break
                 start = time.time()
                 if use_cuda:
@@ -616,8 +606,6 @@ def _initialize(epoch):
                     if isinstance(m, norm_layer):
                         if track_layer == layer:
                             m._initialize_gamma()
-                            m._initialize_affine(args.resume)
-
                             break
                         else:
                             track_layer += 1
@@ -790,7 +778,6 @@ def test(epoch):
 
 
     return (test_loss/batch_idx, 100.*correct/total)
-print("sample_noise: {}".format(args.sample_noise))
 
 for m in net.modules():
     if isinstance(m, norm_layer):
@@ -910,13 +897,3 @@ for epoch in range(start_epoch, args.epoch):
         save_checkpoint(test_acc, epoch)
 
     test_loss, test_acc = test(epoch)
-    if args.reparam is True and epoch % args.reparam_freq == 0:
-        for m in net.modules():
-            if isinstance(m, norm_layer):
-                m.lagrangian.lambda_.data.fill_(0)
-                m.lagrangian.xi_.data.fill_(0)
-        with torch.no_grad():
-            print("initialization")
-            _initialize(epoch)
-
-

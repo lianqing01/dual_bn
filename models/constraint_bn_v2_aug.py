@@ -28,10 +28,10 @@ class LagrangianFunction(Function):
         return grad_input, grad_weight
 
 
-class Constraint_Norm_notheta_(nn.Module):
+class Constraint_Norm_aug(nn.Module):
 
     def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False, pre_affine=True, post_affine=True):
-        super(Constraint_Norm_notheta_, self).__init__()
+        super(Constraint_Norm_aug, self).__init__()
         self.num_features = num_features
         self.pre_affine=pre_affine
         self.post_affine = post_affine
@@ -113,12 +113,14 @@ class Constraint_Norm_notheta_(nn.Module):
     def set_dim(self):
         raise NotImplementedError
 
+
     def _initialize_mu(self, with_affine=False):
         self.mean = self.mean / self.tracking_times
         if with_affine:
             self.old_mu_ = self.mu_
 
         self.mu_.data += self.mean.view(self.mu_.size())
+
 
     def _initialize_gamma(self, with_affine=False):
         if with_affine:
@@ -143,24 +145,24 @@ class Constraint_Norm_notheta_(nn.Module):
         with torch.no_grad():
             self.real_mu += x.mean(dim=self.norm_dim)
 
-        mean = self.lagrangian.get_weighted_mean((x.detach() - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps).detach(), self.norm_dim)
-        var = self.lagrangian.get_weighted_var((x.detach() - self.mu_.detach()) / torch.sqrt(self.gamma_**2 + self.eps), self.gamma_, self.norm_dim)
+        mean = self.lagrangian.get_weighted_mean((x - self.mu_)/torch.sqrt(self.gamma_**2 + self.eps).detach(), self.norm_dim)
+
+        var = self.lagrangian.get_weighted_var((x - self.mu_.detach()) / torch.sqrt(self.gamma_**2 + self.eps), self.gamma_, self.norm_dim)
         if self.sample_noise and self.training:
                 noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
-                noise_mean = noise_mean.view(self.mu_.size())
+                noise_mean = noise_mean.view(self.mu_.size()).clamp(min=0.1, max=10)
                 x = x - (self.mu_ * noise_mean.detach() )
         else:
             x = x - self.mu_
+        # varo
 
-
-        # var
         with torch.no_grad():
             self.real_gamma += torch.sqrt((x**2).clamp(min=0)).mean(dim=self.norm_dim)
         if self.sample_noise and self.training:
                 noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
-                noise_var = noise_var.view(self.gamma_.size())
+                noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
 
-                x = x*noise_var / torch.sqrt((self.gamma_  )**2 + self.eps)
+                x = x / torch.sqrt((self.gamma_*noise_var.detach())**2 + self.eps)
         else:
 
             x = x / torch.sqrt(self.gamma_**2 + self.eps)
@@ -185,9 +187,9 @@ class Constraint_Norm_notheta_(nn.Module):
 
 
 
-class Constraint_Norm_notheta_1d(Constraint_Norm_notheta_):
+class Constraint_Norm_aug1d(Constraint_Norm_aug):
     def __init__(self, num_features, pre_affine=True, post_affine=True):
-        super(Constraint_Norm_notheta_1d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
+        super(Constraint_Norm_aug1d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features]
@@ -195,9 +197,9 @@ class Constraint_Norm_notheta_1d(Constraint_Norm_notheta_):
         if self.post_affine != False:
             self.post_affine_layer = Constraint_Affine1d(self.num_features)
 
-class Constraint_Norm_notheta_2d(Constraint_Norm_notheta_):
+class Constraint_Norm_aug2d(Constraint_Norm_aug):
     def __init__(self, num_features, pre_affine=True, post_affine=True):
-        super(Constraint_Norm_notheta_2d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
+        super(Constraint_Norm_aug2d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features, 1, 1]
@@ -205,7 +207,27 @@ class Constraint_Norm_notheta_2d(Constraint_Norm_notheta_):
         if self.post_affine != False:
             self.post_affine_layer = Constraint_Affine2d(self.num_features)
 
+class Constraint_Lagrangian_aug(Constraint_Lagrangian):
 
+    def __init__(self, num_features, weight_decay=1e-4, get_optimal_lagrangian=False):
+        super(Constraint_Lagrangian_aug, self).__init__(num_features)
+        self.roi = 0
+
+    def get_weighted_mean(self, x, norm_dim):
+        mean = x.mean(dim=norm_dim)
+        self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
+        self.weight_mean + self.roi * self.weight_mean **2
+        self.weight_mean = self.weight_mean.mean()
+        return mean
+
+
+    def get_weighted_var(self, x,  gamma, norm_dim):
+        var = x**2 - 1
+        var = var.mean(dim=norm_dim)
+        self.weight_var = LagrangianFunction.apply(var, self.lambda_)
+        self.weight_var += self.roi * self.weight_var ** 2
+        self.weight_var = self.weight_var.mean()
+        return var+1
 
 
 

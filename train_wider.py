@@ -8,9 +8,9 @@ from __future__ import print_function
 from comet_ml import Experiment
 
 import argparse
-from models.batchrenorm import BatchRenorm2d
 import os.path as osp
 import time
+from models import BatchNorm_augmented2d, BatchNorm_oracle2d
 import csv
 import os
 try:
@@ -31,8 +31,6 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
-from models.batchnorm import BatchNorm2d
-from models.group_norm import GroupNorm
 
 def str2bool(v):
         if isinstance(v, bool):
@@ -42,8 +40,7 @@ def str2bool(v):
         elif v.lower() in ('no', 'false', 'f', 'n', '0'):
             return False
         else:
-            return v
-
+            raise argparse.ArgumentTypeError('Boolean value expected.')
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
@@ -54,44 +51,36 @@ parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--pn-batch-size', default=128, type=int, help='batch size')
-
 parser.add_argument('--epoch', default=200, type=int,
                     help='total epochs to run')
 parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
-parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
+parser.add_argument('--decay', default=5e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=1000)
+parser.add_argument('--test', default=False, type=bool)
+parser.add_argument('--grad_clip', default=10)
 # for lr scheduler
-parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
-parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+parser.add_argument('--schedule', default=[60, 120, 160])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
-parser.add_argument('--sample_noise', default=False, type=str2bool)
-parser.add_argument('--noise_std_mean', default=0, type=float)
-parser.add_argument('--noise_std_var', default=0, type=float)
-parser.add_argument('--norm_layer', default=None, type=str)
-parser.add_argument('--warmup_noise', default=None, type=str)
-parser.add_argument('--warmup_scale', default=10, type=float)
+parser.add_argument('--fixup_scale_decay', default=1e-4, type=float)
+parser.add_argument('--bn_param_lr', default=0.4, type=float)
+parser.add_argument('--lag_param_lr', default=0.01, type=float)
 
-
-
-
-parser.add_argument('--r_max', default=0.5, type=float)
-parser.add_argument('--batch_renorm', default=False, type=str2bool)
-parser.add_argument('--project_name', default="cifar100", type=str)
 
 
 # dataset
 parser.add_argument('--dataset', default='CIFAR10', type=str)
 
 parser.add_argument('--print_freq', default=10, type=int)
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--noise_std_mean', default=0, type=float)
+parser.add_argument('--noise_std_var', default=0, type=float)
+parser.add_argument('--norm_layer', default=None, type=str)
 
-# for noise
-parser.add_argument('--after_x', default="version_1", type=str)
 
 
 
@@ -103,10 +92,6 @@ best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 torch.manual_seed(args.seed)
-if args.warmup_noise is not None:
-    args.warmup_noise = args.warmup_noise.split(",")[:-1]
-    args.warmup_noise = [int(i) for i in args.warmup_noise]
-
 
 args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
@@ -114,7 +99,7 @@ logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir
 
 
 
-wandb.init(project=args.project_name, dir="results/{}".format(args.log_dir),
+wandb.init(project="cifar100", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
@@ -151,14 +136,7 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
-                                          drop_last=True,
-                                          shuffle=True, num_workers=8)
-if args.pn_batch_size - args.batch_size > 0:
-    pn_trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=args.pn_batch_size - args.batch_size,
-                                          drop_last=True,
-                                          shuffle=True, num_workers=8)
-
+                                          shuffle=True, num_workers=4)
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=False,
@@ -170,6 +148,21 @@ elif args.dataset == 'CIFAR100':
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=4)
 
+
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
 if args.norm_layer is not None and args.norm_layer != 'False':
     if args.norm_layer == 'mv_v0':
         norm_layer = models.__dict__['BatchNorm_mv2d']
@@ -185,10 +178,6 @@ if args.norm_layer is not None and args.norm_layer != 'False':
         norm_layer = models.__dict__['BatchNorm2d']
     elif args.norm_layer == 'bn_n1':
         norm_layer = models.__dict__['BatchNorm_n1_2d']
-    elif args.norm_layer == 'bn_n2':
-        norm_layer = models.__dict__['BatchNorm_n2_2d']
-
-
 
 
     else:
@@ -197,9 +186,22 @@ if args.norm_layer is not None and args.norm_layer != 'False':
 else:
     net = models.__dict__[args.model](num_classes=num_classes)
 
-
 # Model
+if args.resume:
+    # Load checkpoint.
+    logger.info('==> Resuming from checkpoint..')
+    checkpoint = torch.load(args.load_model)
+    net.load_state_dict(checkpoint['state_dict'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+else:
+    logger.info('==> Building model..')
 
+
+logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
+           + str(args.seed) + '.csv')
+
+tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
 
 if use_cuda:
     net.cuda()
@@ -212,37 +214,19 @@ else:
     net = net.to(device)
     logger.info("xla")
 
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
-
-if args.resume:
-    # Load checkpoint.
-    logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load(args.load_model)
-    net.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optim'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
-
-else:
-    logger.info('==> Building model..')
-logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
-           + str(args.seed) + '.csv')
-
-tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
-
 criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
 #wandb.watch(net)
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
+                      weight_decay=args.decay)
 
 if args.fixup:
     parameters_bias = [p[1] for p in net.named_parameters() if 'bias' in p[0]]
     parameters_scale = [p[1] for p in net.named_parameters() if 'scale' in p[0]]
     parameters_others = [p[1] for p in net.named_parameters() if not ('bias' in p[0] or 'scale' in p[0])]
     optimizer = optim.SGD(
-            [{'params': parameters_bias, 'lr': args.lr/10.},
-            {'params': parameters_scale, 'lr': args.lr/10.},
+            [{'params': parameters_bias, 'lr': args.lr/10., 'weight_decay': args.fixup_scale_decay},
+            {'params': parameters_scale, 'lr': args.lr/10., 'weight_decay': args.fixup_scale_decay},
             {'params': parameters_others}],
             lr=args.lr,
             momentum=0.9,
@@ -263,6 +247,23 @@ if args.decrease_affine:
                       lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
+if args.norm_layer == 'mv_aug':
+    parameter_mu = [p[1] for p in net.named_parameters() if 'mu_' in p[0]]
+    parameter_gamma = [p[1] for p in net.named_parameters() if 'gamma_' in p[0]]
+    parameter_lag = [p[1] for p in net.named_parameters() if ('alpha' in p[0] or 'beta' in p[0])]
+
+    parameter_others = [p[1] for p in net.named_parameters() if not ('mu_' in p[0] or 'gamma_' in p[0] or \
+                                                                     'alpha' in p[0] or 'beta' in p[0])]
+
+    optimizer = optim.SGD(
+        [{'params': parameter_mu, 'lr': args.bn_param_lr, 'weight_decay': 0, 'momentum': 0},
+         {'params': parameter_gamma, 'lr': args.bn_param_lr, 'weight_decay': 0, 'momentum': 0},
+         {'params': parameter_lag, 'lr': args.lag_param_lr, 'weight_decay': 1e-1, 'momentum': 0.9},
+         {'params': parameter_others}],
+        lr=args.lr,
+        momentum=0.9,
+        weight_decay=args.decay)
+
 
 
 
@@ -278,8 +279,6 @@ def train(epoch):
     total = 0
     acc = AverageMeter(100)
     batch_time = AverageMeter()
-    if args.pn_batch_size - args.batch_size > 0:
-        pn_iter = iter(pn_trainloader)
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
         if use_cuda:
@@ -287,37 +286,21 @@ def train(epoch):
         else:
             inputs = inputs.to(device)
             targets = targets.to(device)
-        if args.pn_batch_size - args.batch_size > 0:
-            try:
-                inputs_pn, targets_pn = pn_iter.__next__()
-            except:
-                pn_iter = iter(pn_trainloader)
-                inputs_pn, targets_pn = pn_iter.__next__()
-            if use_cuda:
-                inputs_pn = inputs_pn.cuda()
-                targets_pn = targets_pn.cuda()
-            else:
-                inputs_pn = inputs_pn.to(device)
-                targets_pn = targets_pn.to(device)
-            inputs = torch.cat([inputs, inputs_pn],dim=0)
-            targets = torch.cat([targets, targets_pn], dim=0)
-
 
 
         outputs = net(inputs)
-        loss = criterion(outputs[:args.batch_size], targets[:args.batch_size])
+        loss = criterion(outputs, targets)
         train_loss.update(loss.data.item())
-        _, predicted = torch.max(outputs[:args.batch_size].data, 1)
-        total += args.batch_size
-        correct_idx = predicted.eq(targets[:args.batch_size].data).cpu().sum().float()
+        _, predicted = torch.max(outputs.data, 1)
+        total += targets.size(0)
+        correct_idx = predicted.eq(targets.data).cpu().sum().float()
         correct += correct_idx
-        acc.update(100. * correct_idx / float(args.batch_size))
+        acc.update(100. * correct_idx / float(targets.size(0)))
         train_loss_avg += loss.item()
 
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-
 
         if use_cuda:
             optimizer.step()
@@ -355,6 +338,37 @@ def train(epoch):
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
+            mu_dis = 0
+            gamma_dis = 0
+            layer = 0
+            lambda_mu = 0
+            lambda_gamma = 0
+            rho_mu = 0
+            rho_gamma = 0
+            if args.norm_layer == 'mv_aug':
+                for m in net.modules():
+                    if isinstance(m, BatchNorm_augmented2d):
+                        mu_dis += m.mu_dis
+                        gamma_dis += m.gamma_dis
+                        lambda_mu += (m.alpha_**2).mean()
+                        lambda_gamma += (m.beta_**2).mean()
+                        rho_mu += (m.alpha1_**2).mean()
+                        rho_gamma += (m.beta1_**2).mean()
+                        layer+=1
+                mu_dis/=float(layer)
+                gamma_dis/=float(layer)
+                lambda_mu /=float(layer)
+                lambda_gamma /=float(layer)
+                rho_mu /=float(layer)
+                rho_gamma/=float(layer)
+                logger.info("mu_dis: {:.3f}, gamma_dis: {:.3f} lambda mu {:.3f} gamma {:.3f} rho mu {:.3f} gamma {:.3f}".format(mu_dis, gamma_dis, lambda_mu, lambda_gamma, rho_mu, rho_gamma))
+
+                wandb.log({"train/mu_dis": mu_dis}, step=epoch)
+                wandb.log({"train/gamma_dis": gamma_dis}, step=epoch)
+                wandb.log({"train/lambda_mu": lambda_mu}, step=epoch)
+                wandb.log({"train/lambda_gamma": lambda_gamma}, step=epoch)
+                wandb.log({"train/rho_mu": rho_mu}, step=epoch)
+                wandb.log({"train/rho_gamma": rho_gamma}, step=epoch)
 
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
@@ -362,7 +376,20 @@ def train(epoch):
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
 
+
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
+    mu_dis = []
+    gamma_dis = []
+
+    if (epoch+1) % 50==0:
+        if args.norm_layer == 'mv_oracle':
+                for m in net.modules():
+                    if isinstance(m, BatchNorm_oracle2d):
+                        mu_dis.append(m.mu_dis.item())
+                        gamma_dis.append(m.gamma_dis.item())
+    mu_dises.append(mu_dis)
+    gamma_dises.append(gamma_dis)
+
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
@@ -371,6 +398,8 @@ def test(epoch):
     net.eval()
     test_loss = AverageMeter(100)
     acc = AverageMeter(100)
+    acc2 = AverageMeter(100)
+    acc3 = AverageMeter(100)
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -389,10 +418,15 @@ def test(epoch):
             test_loss.update(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
+            acc1, acc2_, acc3_ = accuracy(outputs, targets, topk=(1,2,3))
+
             correct_idx = predicted.eq(targets.data).sum().item()
             correct += correct_idx
 
             acc.update(100. * correct_idx / float(targets.size(0)))
+            acc2.update(float(acc2_))
+            acc3.update(float(acc3_))
+
         progress_bar(batch_idx, len(testloader),
                      'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (test_loss.avg, acc.avg,
@@ -406,8 +440,13 @@ def test(epoch):
     tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
     wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
+    logger.info("acc2: {}".format(acc2.avg))
+    logger.info("acc3: {}".format(acc3.avg))
 
     return (test_loss.avg, 100.*correct/total)
+
+
+
 
 
 
@@ -438,7 +477,7 @@ if args.lr_ReduceLROnPlateau == True:
     )
 else:
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones = args.schedule)
+        optimizer, milestones = args.schedule, gamma=0.2)
 
 if torch.__version__ < '1.4.1':
     lr_scheduler.step(start_epoch)
@@ -451,35 +490,25 @@ if not os.path.exists(logname):
         logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
                             'test loss', 'test acc'])
 
-if use_cuda:
-    device = torch.device("cuda")
-
 from models.batchrenorm import BatchRenorm2d
 from models.batchnorm import BatchNorm2d
 if use_cuda:
     device=torch.device("cuda")
 for m in net.modules():
-    if isinstance(m, (BatchRenorm2d, BatchNorm2d, norm_layer)):
-        print(111)
+    if isinstance(m, (BatchRenorm2d, BatchNorm2d)):
         m.sample_noise=args.sample_noise
         m.sample_mean = torch.ones(m.num_features).to(device)
         m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
         m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
-
-
-
+if args.test == True:
+    test(0)
+mu_dises = []
+gamma_dises = []
 for epoch in range(start_epoch, args.epoch):
-    if args.warmup_noise is not None:
-        if epoch in args.warmup_noise:
-
-            for m in net.modules():
-                if isinstance(m, norm_layer):
-                    m.sample_mean_std *= math.sqrt(args.warmup_scale)
-                    m.sample_var_std *= math.sqrt(args.warmup_scale)
-
-
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
+    wandb.log({"test/train_test_loss_gap": test_loss - train_loss}, step=epoch)
+    wandb.log({"test/train_test_acc_gap": train_acc - test_acc}, step=epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
