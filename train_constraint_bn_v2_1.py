@@ -26,7 +26,7 @@ import torchvision.datasets as datasets
 import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
-from utils import create_logger, str2bool, accuracy
+from utils import create_logger
 import wandb
 from models.constraint_bn_v2 import *
 try:
@@ -34,89 +34,111 @@ try:
 except:
     pass
 
-def get_parse():
-    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-    parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-    parser.add_argument('--resume', '-r', action='store_true',
-                        help='resume from checkpoint')
-    parser.add_argument('--model', default="ResNet18", type=str,
-                        help='model type (default: ResNet18)')
-    parser.add_argument('--load_model', type=str, default='')
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
 
-    parser.add_argument('--name', default='0', type=str, help='name of run')
-    parser.add_argument('--seed', default=0, type=int, help='random seed')
-    parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-    parser.add_argument('--epoch', default=200, type=int,
-                        help='total epochs to run')
-    parser.add_argument('--no-augment', dest='augment', action='store_false',
-                        help='use standard augmentation (default: True)')
-    parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
-    parser.add_argument('--log_dir', default="oracle_exp001")
-    parser.add_argument('--grad_clip', default=1)
-    parser.add_argument('--optim_loss', default="cross_entropy")
-    parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=10, type=int)
-    parser.add_argument('--warmup_noise', default=None, type=str)
-    parser.add_argument('--warmup_scale', default=10, type=float)
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
 
-    parser.add_argument('--reparam', default=False, type=str2bool)
-    parser.add_argument('--reparam_freq', default=1, type=int)
-    parser.add_argument('--optimal_multiplier', default=False, type=str2bool)
-    parser.add_argument('--multiplier_average', default=0.9, type=float)
-    parser.add_argument('--constraint_weighted_average', default=True, type=str2bool)
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
 
 
+parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--resume', '-r', action='store_true',
+                    help='resume from checkpoint')
+parser.add_argument('--model', default="ResNet18", type=str,
+                    help='model type (default: ResNet18)')
+parser.add_argument('--load_model', type=str, default='')
 
-    # param for constraint norm
-    parser.add_argument('--lambda_constraint_weight', default=0, type=float)
-    parser.add_argument('--constraint_lr', default=0.1, type=float)
-    parser.add_argument('--constraint_decay', default=1e-3, type=str)
-    parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
-    parser.add_argument('--decay_constraint', default=-1, type=int)
-    parser.add_argument('--update_affine_only', default=False, type=str2bool)
+parser.add_argument('--name', default='0', type=str, help='name of run')
+parser.add_argument('--seed', default=0, type=int, help='random seed')
+parser.add_argument('--batch-size', default=128, type=int, help='batch size')
+parser.add_argument('--epoch', default=200, type=int,
+                    help='total epochs to run')
+parser.add_argument('--no-augment', dest='augment', action='store_false',
+                    help='use standard augmentation (default: True)')
+parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
+parser.add_argument('--log_dir', default="oracle_exp001")
+parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--optim_loss', default="cross_entropy")
+parser.add_argument('--num_classes', default=10, type=int)
+parser.add_argument('--print_freq', default=10, type=int)
+parser.add_argument('--warmup_noise', default=None, type=str)
+parser.add_argument('--warmup_scale', default=10, type=float)
 
-    # two layer
-    parser.add_argument('--two_layer', action='store_true', default=False)
-
-    # for lr scheduler
-    parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
-    parser.add_argument('--schedule', default=[100,150])
-    parser.add_argument('--decrease_affine_lr', default=1, type=float)
-    parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
-    parser.add_argument('--affine_momentum', default=0.9, type=float)
-    parser.add_argument('--affine_decay', default=1e-4, type=float)
-
-    # for adding noise
-    parser.add_argument('--sample_noise', default=False, type=str2bool)
-    parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
-    parser.add_argument('--noise_std', default=0, type=float)
-    parser.add_argument('--lambda_noise_weight', default=1, type=float)
-    parser.add_argument('--noise_mean_std', default=0, type=float)
-    parser.add_argument('--noise_var_std', default=0, type=float)
+parser.add_argument('--reparam', default=False, type=str2bool)
+parser.add_argument('--reparam_freq', default=1, type=int)
+parser.add_argument('--optimal_multiplier', default=False, type=str2bool)
+parser.add_argument('--multiplier_average', default=0.9, type=float)
+parser.add_argument('--constraint_weighted_average', default=True, type=str2bool)
 
 
 
-    # dataset
-    parser.add_argument('--dataset', default='CIFAR10', type=str)
-    parser.add_argument('--add_grad_noise', default=False, type=str2bool)
-    parser.add_argument('--get_norm_freq', default=1, type=int)
-    parser.add_argument('--aug_roi', default=0.1, type=float)
+# param for constraint norm
+parser.add_argument('--lambda_constraint_weight', default=0, type=float)
+parser.add_argument('--constraint_lr', default=0.1, type=float)
+parser.add_argument('--constraint_decay', default=1e-3, type=str)
+parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
+parser.add_argument('--decay_constraint', default=-1, type=int)
+parser.add_argument('--update_affine_only', default=False, type=str2bool)
+
+# two layer
+parser.add_argument('--two_layer', action='store_true', default=False)
+
+# for lr scheduler
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
+parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--decrease_affine_lr', default=1, type=float)
+parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
+parser.add_argument('--affine_momentum', default=0.9, type=float)
+parser.add_argument('--affine_decay', default=1e-4, type=float)
+
+# for adding noise
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
+parser.add_argument('--noise_std', default=0, type=float)
+parser.add_argument('--lambda_noise_weight', default=1, type=float)
+parser.add_argument('--noise_mean_std', default=0, type=float)
+parser.add_argument('--noise_var_std', default=0, type=float)
 
 
 
-    # pretrain
-    parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
-    parser.add_argument('--max_pretrain_epoch', default=20, type=int)
-    parser.add_argument('--add_noise', default=None, type=str)
-    parser.add_argument('--lambda_weight_mean', default=1, type=float)
-    parser.add_argument('--norm_layer', default=None, type=str)
+# dataset
+parser.add_argument('--dataset', default='CIFAR10', type=str)
+parser.add_argument('--add_grad_noise', default=False, type=str2bool)
+parser.add_argument('--get_norm_freq', default=1, type=int)
+parser.add_argument('--aug_roi', default=0.1, type=float)
 
 
-    args = parser.parse_args()
-    args.constraint_decay = float(args.constraint_decay)
-    return args
 
-args = get_parse()
+# pretrain
+parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
+parser.add_argument('--max_pretrain_epoch', default=20, type=int)
+parser.add_argument('--add_noise', default=None, type=str)
+parser.add_argument('--lambda_weight_mean', default=1, type=float)
+parser.add_argument('--norm_layer', default=None, type=str)
+
+
+args = parser.parse_args()
+args.constraint_decay = float(args.constraint_decay)
 
 use_cuda = torch.cuda.is_available()
 
@@ -125,9 +147,6 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 if args.seed != 0:
     torch.manual_seed(args.seed)
-
-
-
 
 args.log_dir = args.log_dir
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)

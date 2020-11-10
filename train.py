@@ -201,7 +201,6 @@ else:
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
 
-tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
 
 if use_cuda:
     net.cuda()
@@ -331,8 +330,6 @@ def train(epoch):
 
         if (batch_idx+1) % args.print_freq == 0:
             curr_idx = epoch * len(trainloader) + batch_idx
-            tb_logger.add_scalar("train/train_loss", train_loss.avg, curr_idx)
-            tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
             #experiment.log_metric("loss_step", train_loss.avg, curr_idx)
             #experiment.log_metric("acc_step", acc.avg, curr_idx)
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
@@ -371,8 +368,6 @@ def train(epoch):
                 wandb.log({"train/rho_gamma": rho_gamma}, step=epoch)
 
 
-    tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
-    tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
 
@@ -434,10 +429,6 @@ def test(epoch):
     acc = 100.*correct/total
     if acc > best_acc:
         best_acc = acc
-    tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
-    tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
-    tb_logger.add_scalar("test/test_loss_epoch", test_loss.avg, epoch)
-    tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
     wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
     logger.info("acc2: {}".format(acc2.avg))
@@ -484,11 +475,6 @@ if torch.__version__ < '1.4.1':
     lr = optimizer.param_groups[0]['lr']
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
-if not os.path.exists(logname):
-    with open(logname, 'w') as logfile:
-        logwriter = csv.writer(logfile, delimiter=',')
-        logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
-                            'test loss', 'test acc'])
 
 from models.batchrenorm import BatchRenorm2d
 from models.batchnorm import BatchNorm2d
