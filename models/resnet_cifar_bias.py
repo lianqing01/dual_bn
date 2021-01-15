@@ -4,13 +4,13 @@ import numpy as np
 import torch.nn.functional as F
 
 
-__all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
+__all__ = ['resnet_bias', 'resnet_bias20', 'resnet_bias32', 'resnet_bias44', 'resnet_bias56', 'resnet_bias110', 'resnet_bias1202']
 
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=1, bias=False)
+                     padding=1, bias=True)
 
 
 
@@ -39,7 +39,7 @@ class BasicBlock(nn.Module):
         if stride != 1 or in_planes != planes:
             if option == 'A':
                 """
-                For CIFAR10 ResNet paper uses option A.
+                For CIFAR10 resnet_bias paper uses option A.
                 """
                 self.shortcut = LambdaLayer(lambda x:
                                             F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes//4, planes//4), "constant", 0))
@@ -58,10 +58,10 @@ class BasicBlock(nn.Module):
 
 
 
-class ResNet(nn.Module):
+class resnet_bias(nn.Module):
 
     def __init__(self, block, layers, num_classes=10, norm_layer=None):
-        super(ResNet, self).__init__()
+        super(resnet_bias, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self.num_layers = sum(layers)
@@ -115,69 +115,49 @@ class ResNet(nn.Module):
         return x
 
 
-    def forward_fc(self, x):
-
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x_ = self.fc(x)
-
-        return x, x_
-
-
-
-
-
-def resnet20(**kwargs):
-    """Constructs a ResNet-20 model.
+def resnet_bias20(**kwargs):
+    """Constructs a resnet_bias-20 model.
 
     """
-    model = ResNet(BasicBlock, [3, 3, 3], **kwargs)
+    model = resnet_bias(BasicBlock, [3, 3, 3], **kwargs)
     return model
 
 
-def resnet32(**kwargs):
-    """Constructs a ResNet-32 model.
+def resnet_bias32(**kwargs):
+    """Constructs a resnet_bias-32 model.
 
     """
-    model = ResNet(BasicBlock, [5, 5, 5], **kwargs)
+    model = resnet_bias(BasicBlock, [5, 5, 5], **kwargs)
     return model
 
 
-def resnet44(**kwargs):
-    """Constructs a ResNet-44 model.
+def resnet_bias44(**kwargs):
+    """Constructs a resnet_bias-44 model.
 
     """
-    model = ResNet(BasicBlock, [7, 7, 7], **kwargs)
+    model = resnet_bias(BasicBlock, [7, 7, 7], **kwargs)
     return model
 
 
-def resnet56(**kwargs):
-    """Constructs a ResNet-56 model.
+def resnet_bias56(**kwargs):
+    """Constructs a resnet_bias-56 model.
 
     """
-    model = ResNet(BasicBlock, [9, 9, 9], **kwargs)
+    model = resnet_bias(BasicBlock, [9, 9, 9], **kwargs)
     return model
 
 
-def resnet110(**kwargs):
-    """Constructs a ResNet-110 model.
+def resnet_bias110(**kwargs):
+    """Constructs a resnet_bias-110 model.
 
     """
-    model = ResNet(BasicBlock, [18, 18, 18], **kwargs)
+    model = resnet_bias(BasicBlock, [18, 18, 18], **kwargs)
     return model
 
 
-def resnet1202(**kwargs):
-    """Constructs a ResNet-1202 model.
+def resnet_bias1202(**kwargs):
+    """Constructs a resnet_bias-1202 model.
 
     """
-    model = ResNet(BasicBlock, [200, 200, 200], **kwargs)
+    model = resnet_bias(BasicBlock, [200, 200, 200], **kwargs)
     return model

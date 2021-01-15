@@ -19,18 +19,16 @@ from .fixup_resnet_imagenet import *
 from .resnet_brn import *
 from .resnet_gn import *
 from .resnet_in import *
-#from .resnet_cifar import *
+from .resnet_cifar import *
 #from .resnet_cifar_constraint import *
 #from .resnet_cifar_constraint_v2 import *
 from .fixup_resnet_cifar import *
-from .resnet_aka import *
 from .resnet_constraintbn_aka import *
 #from .resnet_constraintbn_aka_v2 import *
-from .resnet_aka_nobn import *
-from .resnet_aka_gn import *
+#from .resnet_aka_nobn import *
+#from .resnet_aka_gn import *
 from .resnet_v1 import *
 from .resnet_constraintbn_init_v2 import *
-from .resnet_aka_brn import *
 from .resnet_brn import *
 from .batchnorm_movingaverage import *
 from .batchnorm_movingaverage_v1 import *
@@ -48,3 +46,4 @@ from .constraint_bn_v2_gamma_noise import *
 from .constraint_bn_v2_aug import *
 from .preact_resnet import *
 from .wide_resnet import *
+from .resnet_cifar_bias import *
